@@ -1,0 +1,8 @@
+{
+  "name": "Tiptop Shears & Nails - Luxury Salon & Admin Suite",
+  "description": "High-end bespoke hair and nail salon experience for Tiptop Shears and Nails featuring dynamic service booking, custom packages, gallery showcase, and Supabase-powered admin management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
