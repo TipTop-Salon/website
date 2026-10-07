@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Clock, Check, Sparkles, Calendar, ShieldCheck, Heart } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
+import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const ServiceDetailPage: React.FC = () => {
   const { serviceIdParam, services, navigate, openBookingModal } = useSalon();
@@ -45,9 +46,10 @@ export const ServiceDetailPage: React.FC = () => {
           {/* Left Column: High-Res Image (7 cols) */}
           <div className="lg:col-span-7 relative min-h-[380px] lg:min-h-[500px] bg-[#1C1221]">
             <img
-              src={service.imageUrl}
+              src={getImageUrl(service.imageUrl)}
               alt={service.title}
               className="w-full h-full object-cover"
+              onError={handleImageError}
               referrerPolicy="no-referrer"
             />
             <div className="absolute top-4 left-4 bg-[#1C1221]/90 backdrop-blur-sm text-[#E5A93C] text-xs uppercase tracking-widest font-semibold px-3 py-1.5 rounded">
@@ -165,9 +167,10 @@ export const ServiceDetailPage: React.FC = () => {
                 >
                   <div className="flex items-center gap-4">
                     <img
-                      src={rel.imageUrl}
+                      src={getImageUrl(rel.imageUrl)}
                       alt={rel.title}
                       className="w-16 h-16 rounded object-cover"
+                      onError={handleImageError}
                       referrerPolicy="no-referrer"
                     />
                     <div>

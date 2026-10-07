@@ -33,6 +33,7 @@ const AppContent: React.FC = () => {
     return (
       <ErrorBoundary>
         <AdminPage />
+        <BookingModal />
       </ErrorBoundary>
     );
   }
@@ -63,7 +64,7 @@ const AppContent: React.FC = () => {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen flex flex-col bg-[#FAFAFB] text-[#1C1221] selection:bg-[#E5A93C] selection:text-[#1C1221]">
+      <div className="min-h-screen flex flex-col bg-[#FAFAFB] text-[#1C1221] selection:bg-[#E5A93C] selection:text-[#1C1221] overflow-x-hidden w-full max-w-full">
         {/* Top Utility Announcement Bar */}
         <TopUtilityBar />
 

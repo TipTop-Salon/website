@@ -21,6 +21,7 @@ import {
   Tag,
   Users,
   UserPlus,
+  User,
   Filter,
   Building2,
   Phone,
@@ -36,8 +37,9 @@ import {
   Upload
 } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
-import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem } from '../../types/salon';
-import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL } from '../../lib/supabase';
+import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking } from '../../types/salon';
+import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, uploadToSupabaseStorage, getSupabaseClient } from '../../lib/supabase';
+import { getImageUrl, handleImageError, CDN_IMAGES } from '../../lib/imageHelper';
 
 type AdminTab = 'bookings' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
 
@@ -50,6 +52,8 @@ export const AdminPage: React.FC = () => {
     isStaff,
     adminLogin,
     adminLogout,
+    openBookingModal,
+    createBooking,
     services,
     packages,
     bookings,
@@ -112,7 +116,7 @@ export const AdminPage: React.FC = () => {
     price: 750,
     durationMinutes: 60,
     description: '',
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairShears,
     features: ['Custom consultation', 'Styling finish'],
     isFeatured: true,
     allBranches: true,
@@ -129,7 +133,7 @@ export const AdminPage: React.FC = () => {
     originalPrice: 2650,
     durationMinutes: 120,
     description: '',
-    imageUrl: '/src/assets/images/hero_salon_ambiance_1790223323507.jpg',
+    imageUrl: CDN_IMAGES.hero,
     includedServices: ['Signature Cut', 'Gel Manicure'],
     badgeText: 'Curated Ritual',
     isPopular: false,
@@ -223,7 +227,7 @@ export const AdminPage: React.FC = () => {
       price: 750,
       durationMinutes: 60,
       description: '',
-      imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+      imageUrl: CDN_IMAGES.hairShears,
       features: ['Personalized consultation', 'Signature styling finish'],
       isFeatured: true,
       allBranches: true,
@@ -287,7 +291,7 @@ export const AdminPage: React.FC = () => {
       originalPrice: 2650,
       durationMinutes: 120,
       description: '',
-      imageUrl: '/src/assets/images/hero_salon_ambiance_1790223323507.jpg',
+      imageUrl: CDN_IMAGES.hero,
       includedServices: ['Master Shears Cut', 'Haute Gel Manicure'],
       badgeText: 'Curated Ritual',
       isPopular: false,
@@ -458,6 +462,7 @@ export const AdminPage: React.FC = () => {
   const [editingGalleryItem, setEditingGalleryItem] = useState<GalleryItem | null>(null);
   const [isGalleryModalOpen, setIsGalleryModalOpen] = useState(false);
   const [galleryCategoryFilter, setGalleryCategoryFilter] = useState<string>('all');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [galleryForm, setGalleryForm] = useState<{
     title: string;
     category: string;
@@ -468,13 +473,36 @@ export const AdminPage: React.FC = () => {
     title: '',
     category: 'hair',
     isCustomCategory: false,
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairShears,
     caption: ''
   });
 
-  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // If Supabase Storage is connected, upload directly to salon-media bucket
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      setIsUploadingImage(true);
+      try {
+        const uploadRes = await uploadToSupabaseStorage(client, file, undefined, 'salon-media');
+        if (uploadRes.success && uploadRes.publicUrl) {
+          setGalleryForm((prev) => ({
+            ...prev,
+            imageUrl: uploadRes.publicUrl!
+          }));
+          setIsUploadingImage(false);
+          return;
+        }
+      } catch (uploadErr) {
+        console.warn('Supabase storage upload error, falling back to local data URL:', uploadErr);
+      } finally {
+        setIsUploadingImage(false);
+      }
+    }
+
+    // Offline / local fallback: Read as Data URL
     const reader = new FileReader();
     reader.onload = (uploadEvent) => {
       const result = uploadEvent.target?.result;
@@ -495,7 +523,7 @@ export const AdminPage: React.FC = () => {
       title: '',
       category: defaultCat,
       isCustomCategory: false,
-      imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+      imageUrl: CDN_IMAGES.hairShears,
       caption: ''
     });
     setIsGalleryModalOpen(true);
@@ -533,6 +561,112 @@ export const AdminPage: React.FC = () => {
       await addGalleryItem(payload);
     }
     setIsGalleryModalOpen(false);
+  };
+
+  // Customer Booking Modal (Direct Concierge / Staff Bookings from Appointments page)
+  const [isCustomerBookingModalOpen, setIsCustomerBookingModalOpen] = useState(false);
+  const [customerBookingSuccessMsg, setCustomerBookingSuccessMsg] = useState<string | null>(null);
+  const [isSubmittingCustomerBooking, setIsSubmittingCustomerBooking] = useState(false);
+  const [customerBookingForm, setCustomerBookingForm] = useState({
+    bookingSource: 'walk_in' as 'walk_in' | 'phone' | 'vip',
+    branchId: '',
+    serviceOrPackageId: '',
+    customerName: '',
+    customerPhone: '',
+    customerEmail: '',
+    appointmentDate: new Date().toISOString().split('T')[0],
+    appointmentTime: '11:00 AM',
+    stylist: 'Master Stylist Claire (Hair & Shears Lead)',
+    status: 'confirmed' as Booking['status'],
+    notes: '',
+    customPrice: ''
+  });
+
+  const openCustomerBookingModal = () => {
+    const defaultBranch =
+      selectedBranchFilter !== 'all'
+        ? selectedBranchFilter
+        : (branches[0]?.id || 'silang-premier');
+    const defaultItem = services[0]?.id || packages[0]?.id || '';
+    const today = new Date().toISOString().split('T')[0];
+
+    setCustomerBookingForm({
+      bookingSource: 'walk_in',
+      branchId: defaultBranch,
+      serviceOrPackageId: defaultItem,
+      customerName: '',
+      customerPhone: '',
+      customerEmail: '',
+      appointmentDate: today,
+      appointmentTime: '11:00 AM',
+      stylist: 'Master Stylist Claire (Hair & Shears Lead)',
+      status: 'confirmed',
+      notes: '',
+      customPrice: ''
+    });
+    setIsCustomerBookingModalOpen(true);
+  };
+
+  const handleSaveCustomerBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customerBookingForm.customerName.trim() || !customerBookingForm.customerPhone.trim() || !customerBookingForm.appointmentDate) {
+      return;
+    }
+
+    setIsSubmittingCustomerBooking(true);
+    try {
+      const chosenBranch =
+        branches.find((b) => b.id === customerBookingForm.branchId) ||
+        branches[0] || {
+          id: 'silang-premier',
+          name: 'Premier Mall Silang (Flagship)'
+        };
+
+      const sItem = services.find((s) => s.id === customerBookingForm.serviceOrPackageId);
+      const pItem = packages.find((p) => p.id === customerBookingForm.serviceOrPackageId);
+      const title = sItem?.title || pItem?.title || 'Bespoke Salon Ritual';
+      const defaultPrice = sItem?.price ?? pItem?.price ?? 750;
+      const finalPrice = customerBookingForm.customPrice
+        ? parseFloat(customerBookingForm.customPrice) || defaultPrice
+        : defaultPrice;
+
+      const sourcePrefix =
+        customerBookingForm.bookingSource === 'walk_in'
+          ? '[Walk-In Reception] '
+          : customerBookingForm.bookingSource === 'phone'
+          ? '[Phone Reservation] '
+          : '[VIP Desk] ';
+
+      const finalEmail =
+        customerBookingForm.customerEmail.trim() ||
+        `${customerBookingForm.customerPhone.trim().replace(/\D/g, '') || 'walkin'}@guest.tiptopshears.com`;
+
+      const newBooking = await createBooking({
+        serviceId: customerBookingForm.serviceOrPackageId || 'walk-in-treatment',
+        serviceTitle: title,
+        branchId: chosenBranch.id,
+        branchName: chosenBranch.name,
+        customerName: customerBookingForm.customerName.trim(),
+        customerEmail: finalEmail,
+        customerPhone: customerBookingForm.customerPhone.trim(),
+        appointmentDate: customerBookingForm.appointmentDate,
+        appointmentTime: customerBookingForm.appointmentTime,
+        stylist: customerBookingForm.stylist,
+        notes: `${sourcePrefix}${customerBookingForm.notes.trim()}`,
+        totalPrice: finalPrice,
+        status: customerBookingForm.status
+      });
+
+      setIsCustomerBookingModalOpen(false);
+      setCustomerBookingSuccessMsg(
+        `Appointment successfully booked for ${customerBookingForm.customerName.trim()} (${newBooking.id}) at ${chosenBranch.name}!`
+      );
+      setTimeout(() => setCustomerBookingSuccessMsg(null), 8000);
+    } catch (err) {
+      console.error('Customer booking error:', err);
+    } finally {
+      setIsSubmittingCustomerBooking(false);
+    }
   };
 
   // In-app deletion confirmation (never suppressed by browser or iframe constraints)
@@ -1062,6 +1196,17 @@ export const AdminPage: React.FC = () => {
 
           {/* Quick Header Actions */}
           <div className="flex items-center gap-3">
+            {activeTab === 'bookings' && (
+              <button
+                onClick={openCustomerBookingModal}
+                className="px-4 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow flex items-center gap-2 cursor-pointer transition-colors"
+                title="Book an appointment for a walk-in or phone customer"
+              >
+                <Calendar className="w-4 h-4" />
+                <span>Book for Customer</span>
+              </button>
+            )}
+
             {activeTab === 'services' && (
               <button
                 onClick={openNewServiceModal}
@@ -1131,27 +1276,45 @@ export const AdminPage: React.FC = () => {
           {/* ========================================================= */}
           {activeTab === 'bookings' && (
             <div className="space-y-4">
+              {/* Instant Customer Booking Success Banner */}
+              {customerBookingSuccessMsg && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-sm animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span className="font-medium">{customerBookingSuccessMsg}</span>
+                  </div>
+                  <button
+                    onClick={() => setCustomerBookingSuccessMsg(null)}
+                    className="text-emerald-700 hover:text-emerald-900 p-1 rounded hover:bg-emerald-100 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <p className="text-xs text-[#6B6175]">
-                  Showing real-time appointments. Filter by branch location or update confirmation status.
+                  Showing real-time appointments. Filter by branch location, book appointments for walk-in or phone guests, or update confirmation status.
                 </p>
 
-                {/* Branch Filter dropdown */}
-                <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-[#ECEBF0] text-xs shadow-sm">
-                  <Filter className="w-3.5 h-3.5 text-[#7B2D97]" />
-                  <span className="font-medium text-[#6B6175]">Location:</span>
-                  <select
-                    value={selectedBranchFilter}
-                    onChange={(e) => setSelectedBranchFilter(e.target.value)}
-                    className="bg-transparent font-semibold text-[#1C1221] focus:outline-none cursor-pointer"
-                  >
-                    <option value="all">All Branches ({bookings.length})</option>
-                    {branches.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name} ({bookings.filter((bk) => bk.branchId === b.id).length})
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* Branch Filter dropdown */}
+                  <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-[#ECEBF0] text-xs shadow-sm">
+                    <Filter className="w-3.5 h-3.5 text-[#7B2D97]" />
+                    <span className="font-medium text-[#6B6175]">Location:</span>
+                    <select
+                      value={selectedBranchFilter}
+                      onChange={(e) => setSelectedBranchFilter(e.target.value)}
+                      className="bg-transparent font-semibold text-[#1C1221] focus:outline-none cursor-pointer"
+                    >
+                      <option value="all">All Branches ({bookings.length})</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ({bookings.filter((bk) => bk.branchId === b.id).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -1172,8 +1335,15 @@ export const AdminPage: React.FC = () => {
                   <tbody className="divide-y divide-[#ECEBF0]">
                     {filteredBookings.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="p-8 text-center text-xs text-[#6B6175]">
-                          No bookings found for the selected branch.
+                        <td colSpan={8} className="p-8 text-center text-xs text-[#6B6175] space-y-2">
+                          <p>No bookings found for the selected branch.</p>
+                          <button
+                            onClick={openCustomerBookingModal}
+                            className="px-4 py-2 bg-[#7B2D97] text-white rounded text-xs uppercase tracking-wider font-semibold hover:bg-[#641F7D] cursor-pointer mt-2 inline-flex items-center gap-1.5"
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Book for Customer (Walk-In / Phone)</span>
+                          </button>
                         </td>
                       </tr>
                     ) : (
@@ -1262,8 +1432,9 @@ export const AdminPage: React.FC = () => {
                       <tr key={service.id} className="hover:bg-[#FAFAFB] transition-colors">
                         <td className="p-4 font-medium text-[#1C1221] flex items-center gap-3">
                           <img
-                            src={service.imageUrl}
+                            src={getImageUrl(service.imageUrl)}
                             alt={service.title}
+                            onError={handleImageError}
                             className="w-10 h-10 rounded object-cover border border-[#ECEBF0]"
                           />
                           <div>
@@ -1365,8 +1536,9 @@ export const AdminPage: React.FC = () => {
                       <tr key={pkg.id} className="hover:bg-[#FAFAFB] transition-colors">
                         <td className="p-4 font-medium text-[#1C1221] flex items-center gap-3">
                           <img
-                            src={pkg.imageUrl}
+                            src={getImageUrl(pkg.imageUrl)}
                             alt={pkg.title}
+                            onError={handleImageError}
                             className="w-10 h-10 rounded object-cover border border-[#ECEBF0]"
                           />
                           <div>
@@ -1540,13 +1712,10 @@ export const AdminPage: React.FC = () => {
                   })}
                 </div>
 
-                <button
-                  onClick={openNewGalleryModal}
-                  className="px-3.5 py-1.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow flex items-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Upload Photo</span>
-                </button>
+                <div className="text-xs text-[#8A7E93] font-medium hidden sm:flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#7B2D97]/40"></span>
+                  <span>{gallery.length} Portfolio Photos</span>
+                </div>
               </div>
 
               {/* Gallery Grid */}
@@ -1565,9 +1734,10 @@ export const AdminPage: React.FC = () => {
                   </p>
                   <button
                     onClick={openNewGalleryModal}
-                    className="px-4 py-2 bg-[#7B2D97] text-white text-xs uppercase tracking-wider font-semibold rounded cursor-pointer"
+                    className="px-4 py-2 bg-[#7B2D97] text-white text-xs uppercase tracking-wider font-semibold rounded cursor-pointer inline-flex items-center gap-1.5"
                   >
-                    Add First Photo
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Photo</span>
                   </button>
                 </div>
               ) : (
@@ -1591,8 +1761,9 @@ export const AdminPage: React.FC = () => {
                         >
                           <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#1C1221]">
                             <img
-                              src={photo.imageUrl}
+                              src={getImageUrl(photo.imageUrl)}
                               alt={photo.title}
+                              onError={handleImageError}
                               className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-300"
                               referrerPolicy="no-referrer"
                             />
@@ -2463,21 +2634,25 @@ export const AdminPage: React.FC = () => {
       {/* MODAL 1: SERVICE (CREATE / EDIT) */}
       {/* ========================================================= */}
       {isServiceModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-4 my-8">
-            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] flex flex-col max-h-[90vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header (Pinned at top) */}
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] px-6 py-4 shrink-0 bg-white">
               <h3 className="font-serif text-xl font-medium text-[#1C1221]">
                 {editingService ? 'Edit Salon Service' : 'Add New Salon Service'}
               </h3>
               <button
+                type="button"
                 onClick={() => setIsServiceModalOpen(false)}
-                className="text-[#B3A6BC] hover:text-white cursor-pointer"
+                className="text-[#6B6175] hover:text-[#1C1221] cursor-pointer p-1 rounded-lg hover:bg-[#FAFAFB]"
+                aria-label="Close modal"
               >
                 <X className="w-5 h-5 text-[#6B6175]" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveService} className="space-y-4">
+            <form onSubmit={handleSaveService} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="overflow-y-auto flex-1 min-h-0 p-6 space-y-4 overscroll-contain">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
                   Treatment Title
@@ -2663,7 +2838,10 @@ export const AdminPage: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+              </div>
+
+              {/* Modal Footer (Pinned at bottom) */}
+              <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-[#ECEBF0] shrink-0 bg-[#FAFAFB]">
                 <button
                   type="button"
                   onClick={() => setIsServiceModalOpen(false)}
@@ -2687,21 +2865,24 @@ export const AdminPage: React.FC = () => {
       {/* MODAL 2: PACKAGE (CREATE / EDIT) */}
       {/* ========================================================= */}
       {isPackageModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-4 my-8">
-            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] max-h-[90vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] px-6 py-4 shrink-0 bg-white">
               <h3 className="font-serif text-xl font-medium text-[#1C1221]">
                 {editingPackage ? 'Edit Beauty Package' : 'Add New Beauty Package'}
               </h3>
               <button
+                type="button"
                 onClick={() => setIsPackageModalOpen(false)}
-                className="text-[#B3A6BC] hover:text-white cursor-pointer"
+                className="text-[#6B6175] hover:text-[#1C1221] cursor-pointer p-1 rounded-lg hover:bg-[#FAFAFB]"
+                aria-label="Close modal"
               >
                 <X className="w-5 h-5 text-[#6B6175]" />
               </button>
             </div>
 
-            <form onSubmit={handleSavePackage} className="space-y-4">
+            <form onSubmit={handleSavePackage} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="overflow-y-auto flex-1 min-h-0 p-6 space-y-4 overscroll-contain">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
                   Package Name
@@ -2887,8 +3068,9 @@ export const AdminPage: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+            <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-[#ECEBF0] shrink-0 bg-[#FAFAFB]">
                 <button
                   type="button"
                   onClick={() => setIsPackageModalOpen(false)}
@@ -3309,146 +3491,155 @@ export const AdminPage: React.FC = () => {
       {/* MODAL 6: GALLERY ITEM (UPLOAD / EDIT) */}
       {/* ========================================================= */}
       {isGalleryModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-4 my-8">
-            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
-              <h3 className="font-serif text-xl font-medium text-[#1C1221] flex items-center gap-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl border border-[#ECEBF0] flex flex-col max-h-[90vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header (Pinned at top - never cut off) */}
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] px-5 py-3.5 sm:px-6 sm:py-4 shrink-0 bg-white">
+              <h3 className="font-serif text-lg sm:text-xl font-medium text-[#1C1221] flex items-center gap-2">
                 <ImageIcon className="w-5 h-5 text-[#7B2D97]" />
-                <span>{editingGalleryItem ? 'Edit Portfolio Photo' : 'Upload Portfolio Photo'}</span>
+                <span>{editingGalleryItem ? 'Edit Portfolio Photo' : 'Add Photo to Portfolio'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsGalleryModalOpen(false)}
-                className="text-[#6B6175] hover:text-[#1C1221] cursor-pointer"
+                className="text-[#6B6175] hover:text-[#1C1221] cursor-pointer p-1.5 rounded-lg hover:bg-[#FAFAFB]"
+                aria-label="Close modal"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveGalleryItem} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
-                  Photo Title
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Japanese Precision Shears Bob, Haute Chrome Nails"
-                  value={galleryForm.title}
-                  onChange={(e) => setGalleryForm({ ...galleryForm, title: e.target.value })}
-                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
-                />
-              </div>
-
-              {/* Dynamic Category Selector */}
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221]">
-                  Category Tag (Dynamic)
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <select
-                    value={galleryForm.isCustomCategory ? '__custom__' : galleryForm.category}
-                    onChange={(e) => {
-                      if (e.target.value === '__custom__') {
-                        setGalleryForm({ ...galleryForm, isCustomCategory: true });
-                      } else {
-                        setGalleryForm({
-                          ...galleryForm,
-                          category: e.target.value,
-                          isCustomCategory: false
-                        });
-                      }
-                    }}
-                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
-                  >
-                    {dynamicGalleryCategories
-                      .filter((c) => c.id !== 'all')
-                      .map((cat) => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.label}
-                        </option>
-                      ))}
-                    <option value="__custom__">➕ Custom Category Tag...</option>
-                  </select>
-
-                  {galleryForm.isCustomCategory && (
-                    <input
-                      type="text"
-                      required
-                      placeholder="Type custom category name..."
-                      value={galleryForm.category}
-                      onChange={(e) => setGalleryForm({ ...galleryForm, category: e.target.value })}
-                      className="w-full bg-[#FAFAFB] border border-[#7B2D97] rounded px-3 py-2 text-xs text-[#1C1221]"
-                    />
-                  )}
-                </div>
-                <p className="text-[11px] text-[#6B6175]">
-                  Ties directly to your Category Manager or enter a custom tag for the gallery portfolio.
-                </p>
-              </div>
-
-              {/* Image Input: File Upload or Direct URL */}
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221]">
-                  Photo Image (Upload Device File or Paste URL)
-                </label>
-
-                <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-[#C5BCD0] hover:border-[#7B2D97] rounded-lg cursor-pointer bg-[#FAF8FC] hover:bg-[#F5EFF9] text-center transition-colors">
-                  <Upload className="w-5 h-5 text-[#7B2D97] mb-1" />
-                  <span className="text-xs font-semibold text-[#7B2D97]">Upload photo from device / computer</span>
-                  <span className="text-[10px] text-[#8A7E93] mt-0.5">Supports JPG, PNG, WEBP up to 10MB</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageFileUpload}
-                    className="hidden"
-                  />
-                </label>
-
+            {/* Modal Scrollable Body */}
+            <form onSubmit={handleSaveGalleryItem} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="overflow-y-auto flex-1 min-h-0 p-5 sm:p-6 space-y-4 overscroll-contain">
                 <div>
-                  <span className="text-[11px] text-[#6B6175] block mb-1">Or provide direct image URL:</span>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Photo Title
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="https://... or /src/assets/images/..."
-                    value={galleryForm.imageUrl}
-                    onChange={(e) => setGalleryForm({ ...galleryForm, imageUrl: e.target.value })}
-                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] font-mono"
+                    placeholder="e.g. Japanese Precision Shears Bob, Haute Chrome Nails"
+                    value={galleryForm.title}
+                    onChange={(e) => setGalleryForm({ ...galleryForm, title: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
                   />
                 </div>
 
-                {/* Live Preview */}
-                {galleryForm.imageUrl && (
-                  <div className="relative aspect-[16/10] w-full rounded-lg overflow-hidden border border-[#D9D6E2] bg-[#1C1221]">
-                    <img
-                      src={galleryForm.imageUrl}
-                      alt="Preview"
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
+                {/* Dynamic Category Selector */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221]">
+                    Category Tag (Dynamic)
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <select
+                      value={galleryForm.isCustomCategory ? '__custom__' : galleryForm.category}
+                      onChange={(e) => {
+                        if (e.target.value === '__custom__') {
+                          setGalleryForm({ ...galleryForm, isCustomCategory: true });
+                        } else {
+                          setGalleryForm({
+                            ...galleryForm,
+                            category: e.target.value,
+                            isCustomCategory: false
+                          });
+                        }
                       }}
-                    />
-                    <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-[#1C1221]/80 text-[#E5A93C] text-[10px] font-mono">
-                      Image Preview
-                    </div>
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    >
+                      {dynamicGalleryCategories
+                        .filter((c) => c.id !== 'all')
+                        .map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.label}
+                          </option>
+                        ))}
+                      <option value="__custom__">➕ Custom Category Tag...</option>
+                    </select>
+
+                    {galleryForm.isCustomCategory && (
+                      <input
+                        type="text"
+                        required
+                        placeholder="Type custom category name..."
+                        value={galleryForm.category}
+                        onChange={(e) => setGalleryForm({ ...galleryForm, category: e.target.value })}
+                        className="w-full bg-[#FAFAFB] border border-[#7B2D97] rounded px-3 py-2 text-xs text-[#1C1221]"
+                      />
+                    )}
                   </div>
-                )}
+                  <p className="text-[11px] text-[#6B6175]">
+                    Ties directly to your Category Manager or enter a custom tag for the gallery portfolio.
+                  </p>
+                </div>
+
+                {/* Image Input: File Upload or Direct URL */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221]">
+                    Photo Image (Upload Device File or Paste URL)
+                  </label>
+
+                  <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-[#C5BCD0] hover:border-[#7B2D97] rounded-lg cursor-pointer bg-[#FAF8FC] hover:bg-[#F5EFF9] text-center transition-colors">
+                    <Upload className={`w-5 h-5 text-[#7B2D97] mb-1 ${isUploadingImage ? 'animate-bounce' : ''}`} />
+                    <span className="text-xs font-semibold text-[#7B2D97]">
+                      {isUploadingImage ? 'Uploading to Supabase Storage...' : 'Upload photo from device / computer'}
+                    </span>
+                    <span className="text-[10px] text-[#8A7E93] mt-0.5">
+                      {supabaseConnected ? 'Directly stored in Supabase Storage (salon-media bucket)' : 'Supports JPG, PNG, WEBP up to 10MB'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      disabled={isUploadingImage}
+                      onChange={handleImageFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <div>
+                    <span className="text-[11px] text-[#6B6175] block mb-1">Or provide direct image URL:</span>
+                    <input
+                      type="text"
+                      required
+                      placeholder="https://... or Supabase Storage URL"
+                      value={galleryForm.imageUrl}
+                      onChange={(e) => setGalleryForm({ ...galleryForm, imageUrl: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] font-mono"
+                    />
+                  </div>
+
+                  {/* Live Preview */}
+                  {galleryForm.imageUrl && (
+                    <div className="relative aspect-[16/10] w-full rounded-lg overflow-hidden border border-[#D9D6E2] bg-[#1C1221]">
+                      <img
+                        src={getImageUrl(galleryForm.imageUrl)}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        onError={handleImageError}
+                      />
+                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-[#1C1221]/80 text-[#E5A93C] text-[10px] font-mono">
+                        Image Preview
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Caption / Treatment Details
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="e.g. Sculpted with Japanese high-carbon shears for effortless movement."
+                    value={galleryForm.caption}
+                    onChange={(e) => setGalleryForm({ ...galleryForm, caption: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
-                  Caption / Treatment Details
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="e.g. Sculpted with Japanese high-carbon shears for effortless movement."
-                  value={galleryForm.caption}
-                  onChange={(e) => setGalleryForm({ ...galleryForm, caption: e.target.value })}
-                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+              {/* Modal Footer (Pinned at bottom) */}
+              <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-[#ECEBF0] shrink-0 bg-[#FAFAFB]">
                 <button
                   type="button"
                   onClick={() => setIsGalleryModalOpen(false)}
@@ -3458,10 +3649,10 @@ export const AdminPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={!galleryForm.title || !galleryForm.imageUrl}
+                  disabled={!galleryForm.title || !galleryForm.imageUrl || isUploadingImage}
                   className="px-5 py-2 bg-[#7B2D97] hover:bg-[#641F7D] disabled:opacity-50 text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors"
                 >
-                  {editingGalleryItem ? 'Save Changes' : 'Upload to Gallery'}
+                  {isUploadingImage ? 'Uploading...' : editingGalleryItem ? 'Save Changes' : 'Add to Portfolio'}
                 </button>
               </div>
             </form>
@@ -3502,6 +3693,325 @@ export const AdminPage: React.FC = () => {
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 8: CONCIERGE DESK — BOOK FOR CUSTOMER */}
+      {/* ========================================================= */}
+      {isCustomerBookingModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header (Pinned) */}
+            <div className="flex items-center justify-between border-b border-[#32223D] px-6 py-4 shrink-0 bg-[#1C1221] text-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#7B2D97] flex items-center justify-center text-white">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-medium text-white flex items-center gap-2">
+                    <span>Book Appointment for Customer</span>
+                    <span className="text-[10px] font-mono uppercase bg-[#E5A93C]/20 text-[#E5A93C] px-2 py-0.5 rounded border border-[#E5A93C]/30">
+                      Concierge Desk
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-[#DDD7E3]">
+                    Create an instant walk-in booking, phone reservation, or VIP appointment.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCustomerBookingModalOpen(false)}
+                className="text-[#A395AD] hover:text-white cursor-pointer p-1.5 rounded-lg hover:bg-white/10"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleSaveCustomerBooking} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="overflow-y-auto flex-1 min-h-0 p-5 sm:p-6 space-y-4 overscroll-contain">
+                {/* Booking Source Quick Pills */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5">
+                    Booking Channel
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCustomerBookingForm({ ...customerBookingForm, bookingSource: 'walk_in' })}
+                      className={`py-2 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        customerBookingForm.bookingSource === 'walk_in'
+                          ? 'bg-[#FAF5FE] border-[#7B2D97] text-[#7B2D97] font-semibold shadow-xs'
+                          : 'bg-white border-[#ECEBF0] text-[#6B6175] hover:bg-[#FAFAFB]'
+                      }`}
+                    >
+                      <span>🚶 Walk-In Client</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerBookingForm({ ...customerBookingForm, bookingSource: 'phone' })}
+                      className={`py-2 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        customerBookingForm.bookingSource === 'phone'
+                          ? 'bg-[#FAF5FE] border-[#7B2D97] text-[#7B2D97] font-semibold shadow-xs'
+                          : 'bg-white border-[#ECEBF0] text-[#6B6175] hover:bg-[#FAFAFB]'
+                      }`}
+                    >
+                      <span>📞 Phone Reservation</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerBookingForm({ ...customerBookingForm, bookingSource: 'vip' })}
+                      className={`py-2 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        customerBookingForm.bookingSource === 'vip'
+                          ? 'bg-[#FAF5FE] border-[#7B2D97] text-[#7B2D97] font-semibold shadow-xs'
+                          : 'bg-white border-[#ECEBF0] text-[#6B6175] hover:bg-[#FAFAFB]'
+                      }`}
+                    >
+                      <span>⭐ VIP / In-Person</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Customer Contact Details */}
+                <div className="bg-[#FAF8FC] p-4 rounded-xl border border-[#ECE4F2] space-y-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-[#7B2D97] flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5" />
+                    <span>Customer Information</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#1C1221] mb-1">
+                        Full Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Sofia Del Rosario"
+                        value={customerBookingForm.customerName}
+                        onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, customerName: e.target.value })}
+                        className="w-full bg-white border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#1C1221] mb-1">
+                        Contact Phone <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        placeholder="+63 917 123 4567"
+                        value={customerBookingForm.customerPhone}
+                        onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, customerPhone: e.target.value })}
+                        className="w-full bg-white border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#1C1221] mb-1 flex items-center justify-between">
+                      <span>Email Address</span>
+                      <span className="text-[10px] text-[#8A7E93] font-normal lowercase">(optional for walk-ins)</span>
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="sofia@example.com (optional)"
+                      value={customerBookingForm.customerEmail}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, customerEmail: e.target.value })}
+                      className="w-full bg-white border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                    />
+                  </div>
+                </div>
+
+                {/* Branch Location & Service Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      Salon Branch
+                    </label>
+                    <select
+                      value={customerBookingForm.branchId}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, branchId: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                    >
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ({b.city})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                      <Scissors className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      Service / Treatment
+                    </label>
+                    <select
+                      value={customerBookingForm.serviceOrPackageId}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, serviceOrPackageId: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                    >
+                      <optgroup label="Salon Services">
+                        {services.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.title} — ₱{(s.price || 0).toLocaleString()} ({s.durationMinutes}m)
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Beauty Packages">
+                        {packages.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.title} — ₱{(p.price || 0).toLocaleString()} ({p.durationMinutes}m)
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Date, Time Slot & Stylist */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={customerBookingForm.appointmentDate}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, appointmentDate: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      Time Slot
+                    </label>
+                    <select
+                      value={customerBookingForm.appointmentTime}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, appointmentTime: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    >
+                      {[
+                        '10:00 AM',
+                        '11:00 AM',
+                        '12:00 PM',
+                        '01:30 PM',
+                        '02:30 PM',
+                        '03:45 PM',
+                        '05:00 PM',
+                        '06:15 PM',
+                        '07:30 PM'
+                      ].map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      Specialist
+                    </label>
+                    <select
+                      value={customerBookingForm.stylist}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, stylist: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    >
+                      <option value="Master Stylist Claire (Hair & Shears Lead)">Master Stylist Claire</option>
+                      <option value="Artisan Nailist Vivienne (Gel Architecture & Art)">Artisan Nailist Vivienne</option>
+                      <option value="Spa Specialist Maya (Hydrotherapy & Pedicures)">Spa Specialist Maya</option>
+                      <option value="First Available Senior Specialist">First Available Specialist</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Status & Price Override Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                      Initial Status
+                    </label>
+                    <select
+                      value={customerBookingForm.status}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, status: e.target.value as any })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    >
+                      <option value="confirmed">Confirmed (Scheduled in Salon)</option>
+                      <option value="pending">Pending (Awaiting Confirmation)</option>
+                      <option value="completed">Completed (Direct Walk-In Finished)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center justify-between">
+                      <span>Total Price (₱)</span>
+                      <span className="text-[10px] text-[#8A7E93]">Leave blank for standard catalog rate</span>
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 750 (or custom discount rate)"
+                      value={customerBookingForm.customPrice}
+                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, customPrice: e.target.value })}
+                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                    />
+                  </div>
+                </div>
+
+                {/* Internal Reception Notes */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-[#7B2D97]" />
+                    Reception Desk & Specialist Notes
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Client requested balayage touchup consultation; allergic to lavender oil; paying cash at counter."
+                    value={customerBookingForm.notes}
+                    onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, notes: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer (Pinned) */}
+              <div className="flex items-center justify-between px-6 py-4 border-t border-[#ECEBF0] shrink-0 bg-[#FAFAFB]">
+                <div className="text-xs text-[#6B6175]">
+                  Instant record synced to real-time appointments schedule
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomerBookingModalOpen(false)}
+                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      !customerBookingForm.customerName.trim() ||
+                      !customerBookingForm.customerPhone.trim() ||
+                      !customerBookingForm.appointmentDate ||
+                      isSubmittingCustomerBooking
+                    }
+                    className="px-5 py-2.5 bg-[#7B2D97] hover:bg-[#641F7D] disabled:opacity-50 text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{isSubmittingCustomerBooking ? 'Booking...' : 'Confirm & Book Appointment'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

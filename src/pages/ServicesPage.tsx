@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Clock, Search, Scissors, Sparkles, Check, ArrowRight, MapPin, Filter } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
+import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const ServicesPage: React.FC = () => {
   const { services, categories: dynamicCategories, branches, activeBranchId, activeBranch, navigate, openBookingModal } = useSalon();
@@ -128,9 +129,10 @@ export const ServicesPage: React.FC = () => {
                   {/* Image */}
                   <div className="relative aspect-[16/10] w-full overflow-hidden bg-[#1C1221]">
                     <img
-                      src={service.imageUrl}
+                      src={getImageUrl(service.imageUrl)}
                       alt={service.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                      onError={handleImageError}
                       referrerPolicy="no-referrer"
                     />
                     <div className="absolute top-3 right-3 bg-[#1C1221]/90 backdrop-blur-sm text-[#E5A93C] text-xs font-mono font-bold px-2.5 py-1 rounded">

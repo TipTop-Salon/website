@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight, Scissors, Sparkles, Shield, HeartHandshake, Check, Clock, Calendar } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
+import { getImageUrl, handleImageError, CDN_IMAGES } from '../lib/imageHelper';
 
 export const HomePage: React.FC = () => {
   const { services, settings, navigate, openBookingModal } = useSalon();
@@ -49,9 +50,10 @@ export const HomePage: React.FC = () => {
         {/* Background Image with Scrim */}
         <div className="absolute inset-0 z-0">
           <img
-            src="/src/assets/images/hero_salon_ambiance_1790223323507.jpg"
+            src={getImageUrl(CDN_IMAGES.hero)}
             alt="Tiptop Shears & Nails Luxury Salon Interior"
             className="w-full h-full object-cover object-center brightness-60 contrast-105 transform scale-100 hover:scale-102 transition-transform duration-1000 ease-out"
+            onError={handleImageError}
             referrerPolicy="no-referrer"
           />
           {/* Measured Scrim for WCAG AA readability */}
@@ -64,7 +66,7 @@ export const HomePage: React.FC = () => {
             Tiptop Shears & Nails · Haute Beauty Atelier
           </span>
 
-          <h1 className="font-serif text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-light text-white tracking-tight leading-[1.1] mb-6 text-balance">
+          <h1 className="font-serif text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-light text-white tracking-tight leading-[1.1] mb-6 text-balance break-words">
             Beauty that Reflects <br className="hidden sm:inline" />
             <span className="font-serif italic font-normal text-[#E5A93C]">Your Style</span>
           </h1>
@@ -153,9 +155,10 @@ export const HomePage: React.FC = () => {
               {/* Image */}
               <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#1C1221]">
                 <img
-                  src={service.imageUrl}
+                  src={getImageUrl(service.imageUrl)}
                   alt={service.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                  onError={handleImageError}
                   referrerPolicy="no-referrer"
                 />
                 {service.isFeatured && (
@@ -213,16 +216,17 @@ export const HomePage: React.FC = () => {
       </section>
 
       {/* 4. BRAND ABOUT SNIPPET ("Where Beauty Meets Expertise") */}
-      <section className="bg-[#1C1221] text-white py-20 px-4 sm:px-6 lg:px-8 border-y border-[#32223D]">
+      <section className="bg-[#1C1221] text-white py-20 px-4 sm:px-6 lg:px-8 border-y border-[#32223D] overflow-hidden">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
             {/* Left Column: Image */}
             <div className="lg:col-span-6 relative">
               <div className="relative aspect-[16/10] rounded-lg overflow-hidden shadow-2xl border border-[#32223D]">
                 <img
-                  src="/src/assets/images/about_salon_interior_1790223381558.jpg"
+                  src={getImageUrl(CDN_IMAGES.interiorReception)}
                   alt="Tiptop Salon Interior Lounge"
                   className="w-full h-full object-cover"
+                  onError={handleImageError}
                   referrerPolicy="no-referrer"
                 />
               </div>
@@ -265,7 +269,7 @@ export const HomePage: React.FC = () => {
                 ))}
               </div>
 
-              <div className="pt-4 flex items-center gap-4">
+              <div className="pt-4 flex flex-wrap items-center gap-3 sm:gap-4">
                 <button
                   onClick={() => navigate('/about')}
                   className="px-6 py-3 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-xs uppercase tracking-wider font-semibold rounded transition-colors cursor-pointer"

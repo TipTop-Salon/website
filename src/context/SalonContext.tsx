@@ -84,7 +84,7 @@ interface SalonContextType {
   updatePackage: (id: string, updates: Partial<BeautyPackage>) => Promise<void>;
   deletePackage: (id: string) => Promise<void>;
 
-  createBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'>) => Promise<Booking>;
+  createBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'> & { status?: Booking['status'] }) => Promise<Booking>;
   updateBookingStatus: (id: string, status: Booking['status']) => Promise<void>;
 
   updateSettings: (updates: Partial<SalonSettings>) => void;
@@ -1268,16 +1268,21 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   // CRUD for Bookings (Branch-Aware)
-  const createBooking = async (bookingData: Omit<Booking, 'id' | 'createdAt' | 'status'>): Promise<Booking> => {
+  const createBooking = async (
+    bookingData: Omit<Booking, 'id' | 'createdAt' | 'status'> & { status?: Booking['status'] }
+  ): Promise<Booking> => {
     const newId = `bk-${Date.now().toString().slice(-6)}`;
     const branchToUse = branches.find(b => b.id === bookingData.branchId) || activeBranch;
+    const initialStatus: Booking['status'] = bookingData.status || 'pending';
+    const finalEmail = bookingData.customerEmail?.trim() || `${(bookingData.customerPhone || 'guest').replace(/\D/g, '') || 'walkin'}@guest.tiptopshears.com`;
 
     const newBooking: Booking = {
       ...bookingData,
       id: newId,
+      customerEmail: finalEmail,
       branchId: branchToUse.id,
       branchName: branchToUse.name,
-      status: 'pending',
+      status: initialStatus,
       createdAt: new Date().toISOString()
     };
 
@@ -1299,7 +1304,7 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         stylist: newBooking.stylist,
         notes: newBooking.notes,
         total_price: newBooking.totalPrice,
-        status: 'pending'
+        status: initialStatus
       }).then(({ error }) => {
         if (error) console.error('Supabase booking insert error', error);
       });

@@ -142,20 +142,21 @@ export const BookingModal: React.FC = () => {
     e.preventDefault();
     setSubmitError(null);
 
-    if (!customerName.trim() || !customerEmail.trim() || !customerPhone.trim() || !appointmentDate) {
-      setSubmitError('Please complete all required contact and date fields.');
+    if (!customerName.trim() || !customerPhone.trim() || !appointmentDate) {
+      setSubmitError('Please complete all required contact (Name & Phone) and date fields.');
       return;
     }
 
     setIsSubmitting(true);
     try {
+      const generatedEmail = customerEmail.trim() || `${customerPhone.trim().replace(/\D/g, '') || 'guest'}@guest.tiptopshears.com`;
       const newBooking = await createBooking({
         serviceId: selectedServiceId || (services?.[0]?.id ?? 'custom-booking'),
         serviceTitle: selectedTitle,
         branchId: chosenBranch?.id || 'silang-premier',
         branchName: chosenBranch?.name || 'Premier Mall Silang (Flagship)',
         customerName: customerName.trim(),
-        customerEmail: customerEmail.trim(),
+        customerEmail: generatedEmail,
         customerPhone: customerPhone.trim(),
         appointmentDate,
         appointmentTime,
@@ -183,8 +184,8 @@ export const BookingModal: React.FC = () => {
   if (!isBookingModalOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#140D18]/85 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] overflow-hidden my-8 max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#140D18]/85 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="relative w-full max-w-2xl bg-white rounded-xl shadow-2xl border border-[#ECEBF0] overflow-hidden max-h-[92vh] sm:max-h-[88vh] flex flex-col">
         {/* Header */}
         <div className="bg-[#1C1221] px-6 py-5 text-white flex items-center justify-between border-b border-[#32223D] shrink-0">
           <div>
@@ -418,14 +419,18 @@ export const BookingModal: React.FC = () => {
 
               {/* Email Address */}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5 flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-[#7B2D97]" />
-                  Email Address for Confirmation <span className="text-red-500">*</span>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-[#7B2D97]" />
+                    Email Address
+                  </span>
+                  <span className="text-[10px] text-[#8A7E93] font-normal lowercase tracking-normal">
+                    (optional for walk-ins)
+                  </span>
                 </label>
                 <input
                   type="email"
-                  required
-                  placeholder="maria@example.com"
+                  placeholder="maria@example.com (or leave blank if walk-in)"
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
                   className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3.5 py-2 text-xs text-[#1C1221] focus:outline-none focus:ring-2 focus:ring-[#7B2D97]"

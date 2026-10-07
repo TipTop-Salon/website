@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sparkles, Clock, Check, Calendar, ArrowRight, MapPin } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
+import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const PackagesPage: React.FC = () => {
   const { packages, branches, openBookingModal } = useSalon();
@@ -39,9 +40,10 @@ export const PackagesPage: React.FC = () => {
                 {/* Image Header */}
                 <div className="relative aspect-[16/9] w-full overflow-hidden bg-[#1C1221]">
                   <img
-                    src={pkg.imageUrl}
+                    src={getImageUrl(pkg.imageUrl)}
                     alt={pkg.title}
                     className="w-full h-full object-cover"
+                    onError={handleImageError}
                     referrerPolicy="no-referrer"
                   />
                   {pkg.badgeText && (

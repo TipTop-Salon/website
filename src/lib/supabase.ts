@@ -29,6 +29,38 @@ export function getSupabaseClient(customUrl?: string, customKey?: string): Supab
   return null;
 }
 
+/**
+ * Upload an image file directly to Supabase Storage bucket 'salon-media'
+ * and returns the permanent CDN public URL.
+ */
+export async function uploadToSupabaseStorage(
+  client: SupabaseClient,
+  file: File | Blob,
+  fileName?: string,
+  bucket: string = 'salon-media'
+): Promise<{ success: boolean; publicUrl?: string; error?: string }> {
+  try {
+    const rawExt = file instanceof File ? file.name.split('.').pop() : 'jpg';
+    const ext = rawExt ? rawExt.toLowerCase() : 'jpg';
+    const uniqueName = fileName || `atelier-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const filePath = `uploads/${uniqueName}`;
+
+    const { error: uploadError } = await client.storage.from(bucket).upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: true
+    });
+
+    if (uploadError) {
+      return { success: false, error: uploadError.message };
+    }
+
+    const { data } = client.storage.from(bucket).getPublicUrl(filePath);
+    return { success: true, publicUrl: data.publicUrl };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Storage upload failed' };
+  }
+}
+
 export const SUPABASE_SQL_SCHEMA = `-- Tiptop Shears & Nails Complete Multi-Branch Supabase Schema
 -- Run this in your Supabase Project SQL Editor to provision all tables & security policies
 
@@ -232,6 +264,21 @@ select
 from auth.users
 on conflict (id) do update set
   email = excluded.email;
+
+-- 10. Supabase Storage: Public Bucket 'salon-media' for Treatments & Gallery Photos
+insert into storage.buckets (id, name, public) 
+values ('salon-media', 'salon-media', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Public Access to salon-media" on storage.objects;
+drop policy if exists "Allow Uploads to salon-media" on storage.objects;
+drop policy if exists "Allow Updates to salon-media" on storage.objects;
+drop policy if exists "Allow Deletions to salon-media" on storage.objects;
+
+create policy "Public Access to salon-media" on storage.objects for select using (bucket_id = 'salon-media');
+create policy "Allow Uploads to salon-media" on storage.objects for insert with check (bucket_id = 'salon-media');
+create policy "Allow Updates to salon-media" on storage.objects for update using (bucket_id = 'salon-media');
+create policy "Allow Deletions to salon-media" on storage.objects for delete using (bucket_id = 'salon-media');
 `;
 
 // Pure Clean Schema (Default - Zero Seed Data)
@@ -262,26 +309,26 @@ on conflict (id) do nothing;
 -- 3. Seed Services
 insert into public.services (id, title, category, category_label, price, duration_minutes, description, image_url, features, is_featured, popular)
 values
-  ('srv-1', 'Japanese Precision Shears Haircut', 'hair', 'Hair & Styling', 850, 60, 'Dry architectural shears cutting tailored to anatomical head shape, bone structure, and natural cowlick flow.', '/src/assets/images/service_precision_shears_1790223342879.jpg', array['Micro-tapered shears detailing', 'Purifying scalp clarifying wash', 'Bespoke blow-dry finish'], true, true),
-  ('srv-2', 'Russian Dry Cuticle & Haute Builder Gel', 'nails', 'Nails & Extensions', 1250, 75, 'Flawless diamond flame e-file cuticle clean with hypoallergenic European builder gel overlay that strengthens natural nails.', '/src/assets/images/service_luxury_manicure_1790223356476.jpg', array['Diamond bit cuticle cleanup', 'Structured apex builder gel', 'Mirror glass high-shine seal'], true, true),
-  ('srv-3', 'Volcanic Basalt Stone Pedicure Ritual', 'spa', 'Spa & Wellness', 1100, 75, 'Restorative foot hydrotherapy with volcanic basalt stones, botanical essential oils, and deep muscle relief massage.', '/src/assets/images/service_pedicure_spa_1790223369654.jpg', array['Dead Sea mineral foot soak', 'Warm basalt stone calf massage', 'Intense heel callus smoothing'], true, false)
+  ('srv-1', 'Japanese Precision Shears Haircut', 'hair', 'Hair & Styling', 850, 60, 'Dry architectural shears cutting tailored to anatomical head shape, bone structure, and natural cowlick flow.', '/images/service_precision_shears_1790223342879.jpg', array['Micro-tapered shears detailing', 'Purifying scalp clarifying wash', 'Bespoke blow-dry finish'], true, true),
+  ('srv-2', 'Russian Dry Cuticle & Haute Builder Gel', 'nails', 'Nails & Extensions', 1250, 75, 'Flawless diamond flame e-file cuticle clean with hypoallergenic European builder gel overlay that strengthens natural nails.', '/images/service_luxury_manicure_1790223356476.jpg', array['Diamond bit cuticle cleanup', 'Structured apex builder gel', 'Mirror glass high-shine seal'], true, true),
+  ('srv-3', 'Volcanic Basalt Stone Pedicure Ritual', 'spa', 'Spa & Wellness', 1100, 75, 'Restorative foot hydrotherapy with volcanic basalt stones, botanical essential oils, and deep muscle relief massage.', '/images/service_pedicure_spa_1790223369654.jpg', array['Dead Sea mineral foot soak', 'Warm basalt stone calf massage', 'Intense heel callus smoothing'], true, false)
 on conflict (id) do nothing;
 
 -- 4. Seed Packages
 insert into public.packages (id, title, subtitle, price, original_price, duration_minutes, description, included_services, image_url, is_popular, badge_text)
 values
-  ('pkg-1', 'The Signature Atelier Rejuvenation', 'Total Shears, Nails & Scalp Reset', 2650, 3200, 150, 'Our pinnacle luxury package combining anatomical shears sculpting, European builder gel manicure, and Japanese scalp wash.', array['Japanese Precision Shears Cut', 'Russian Cuticle & Gel Manicure', 'Herbal Scalp Rejuvenation Bath', 'Tailored Botanical Aftercare Regimen'], '/src/assets/images/hero_salon_ambiance_1790223323507.jpg', true, 'Most Popular Atelier Ritual'),
-  ('pkg-2', 'Bridal & Red-Carpet Couturière Suite', 'High-Definition Glamour & Lasting Radiance', 3800, 4600, 180, 'Complete bridal treatment ensuring enduring photograph-ready hair luster and immaculate Haute Gel-X extensions.', array['Custom Couture Hair Sculpting', 'Haute Gel-X Full Extensions & Chrome Nail Art', 'Basalt Stone Pedicure & Reflexology', 'Pre-Event Trial Consultation'], '/src/assets/images/service_luxury_manicure_1790223356476.jpg', true, 'Exclusive Bridal Experience')
+  ('pkg-1', 'The Signature Atelier Rejuvenation', 'Total Shears, Nails & Scalp Reset', 2650, 3200, 150, 'Our pinnacle luxury package combining anatomical shears sculpting, European builder gel manicure, and Japanese scalp wash.', array['Japanese Precision Shears Cut', 'Russian Cuticle & Gel Manicure', 'Herbal Scalp Rejuvenation Bath', 'Tailored Botanical Aftercare Regimen'], '/images/hero_salon_ambiance_1790223323507.jpg', true, 'Most Popular Atelier Ritual'),
+  ('pkg-2', 'Bridal & Red-Carpet Couturière Suite', 'High-Definition Glamour & Lasting Radiance', 3800, 4600, 180, 'Complete bridal treatment ensuring enduring photograph-ready hair luster and immaculate Haute Gel-X extensions.', array['Custom Couture Hair Sculpting', 'Haute Gel-X Full Extensions & Chrome Nail Art', 'Basalt Stone Pedicure & Reflexology', 'Pre-Event Trial Consultation'], '/images/service_luxury_manicure_1790223356476.jpg', true, 'Exclusive Bridal Experience')
 on conflict (id) do nothing;
 
 -- 5. Seed Gallery Portfolios
 insert into public.gallery (id, title, category, image_url, caption)
 values
-  ('gal-1', 'Precision Shears Sculpting', 'hair', '/src/assets/images/service_precision_shears_1790223342879.jpg', 'Clean, architectural angles sculpted with Japanese steel shears for natural volume and movement.'),
-  ('gal-2', 'Glazed Almond Couture Nails', 'nails', '/src/assets/images/service_luxury_manicure_1790223356476.jpg', 'Soft nude overlay with micro gold leaf inlay and ultra-glossy glass topcoat.'),
-  ('gal-3', 'The Serene Sanctuary Lounge', 'ambiance', '/src/assets/images/hero_salon_ambiance_1790223323507.jpg', 'Warm ambient illumination and deep forest green velvet stations designed for calm and privacy.'),
-  ('gal-4', 'Basalt Stone Pedicure Suite', 'spa', '/src/assets/images/service_pedicure_spa_1790223369654.jpg', 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'),
-  ('gal-5', 'Boutique Reception & Care Bar', 'ambiance', '/src/assets/images/about_salon_interior_1790223381558.jpg', 'Fluted wood detailing, warm curved archways, and organic plant botanicals.')
+  ('gal-1', 'Precision Shears Sculpting', 'hair', '/images/service_precision_shears_1790223342879.jpg', 'Clean, architectural angles sculpted with Japanese steel shears for natural volume and movement.'),
+  ('gal-2', 'Glazed Almond Couture Nails', 'nails', '/images/service_luxury_manicure_1790223356476.jpg', 'Soft nude overlay with micro gold leaf inlay and ultra-glossy glass topcoat.'),
+  ('gal-3', 'The Serene Sanctuary Lounge', 'ambiance', '/images/hero_salon_ambiance_1790223323507.jpg', 'Warm ambient illumination and deep forest green velvet stations designed for calm and privacy.'),
+  ('gal-4', 'Basalt Stone Pedicure Suite', 'spa', '/images/service_pedicure_spa_1790223369654.jpg', 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'),
+  ('gal-5', 'Boutique Reception & Care Bar', 'ambiance', '/images/about_salon_interior_1790223381558.jpg', 'Fluted wood detailing, warm curved archways, and organic plant botanicals.')
 on conflict (id) do nothing;
 `;
 

@@ -154,9 +154,9 @@ export const Footer: React.FC = () => {
         </div>
 
         {/* Bottom copyright line */}
-        <div className="mt-14 pt-8 border-t border-[#2E1E38] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#8A7C94]">
+        <div className="mt-14 pt-8 border-t border-[#2E1E38] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#8A7C94] text-center sm:text-left">
           <p>© {new Date().getFullYear()} Tiptop Shears and Nails. All rights reserved.</p>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-3 sm:gap-6 text-center">
             <span>Bespoke Beauty Care</span>
             <span>·</span>
             <span>Organic Certified Products</span>

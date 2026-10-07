@@ -38,7 +38,7 @@ export const Navbar: React.FC = () => {
       }`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20">
+        <div className="flex items-center justify-between h-16 sm:h-20 gap-2">
           {/* Zone 1: Brand Wordmark (Single element) */}
           <a
             href="/"
@@ -46,9 +46,9 @@ export const Navbar: React.FC = () => {
               e.preventDefault();
               handleNavClick('/');
             }}
-            className="group flex flex-col justify-center"
+            className="group flex flex-col justify-center min-w-0 shrink"
           >
-            <span className="font-serif text-2xl md:text-3xl font-medium tracking-wide text-white group-hover:text-[#E5A93C] transition-colors whitespace-nowrap">
+            <span className="font-serif text-lg sm:text-2xl md:text-3xl font-medium tracking-wide text-white group-hover:text-[#E5A93C] transition-colors truncate">
               Tiptop <span className="font-serif italic font-normal text-[#E5A93C]">Shears & Nails</span>
             </span>
           </a>
@@ -80,21 +80,30 @@ export const Navbar: React.FC = () => {
           </nav>
 
           {/* Zone 3: Primary Actions */}
-          <div className="flex items-center gap-3">
-            {/* Primary CTA: Book Appointment */}
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* Desktop / Tablet CTA: Book Appointment */}
             <button
               onClick={() => openBookingModal()}
-              className="px-5 py-2.5 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-xs uppercase tracking-wider font-semibold rounded transition-all duration-200 shadow-sm hover:shadow-md flex items-center gap-2 cursor-pointer whitespace-nowrap active:scale-[0.98]"
+              className="hidden sm:flex px-4 md:px-5 py-2.5 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-xs uppercase tracking-wider font-semibold rounded transition-all duration-200 shadow-sm hover:shadow-md items-center gap-2 cursor-pointer whitespace-nowrap active:scale-[0.98]"
             >
               <Calendar className="w-4 h-4" />
               <span>Book Appointment</span>
+            </button>
+
+            {/* Mobile Compact Book Button */}
+            <button
+              onClick={() => openBookingModal()}
+              className="sm:hidden px-2.5 py-1.5 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-[11px] uppercase tracking-wider font-bold rounded flex items-center gap-1 cursor-pointer active:scale-[0.98] shadow-sm"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Book</span>
             </button>
 
             {/* Mobile Hamburger */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label="Toggle menu"
-              className="md:hidden p-2 text-[#DDD7E3] hover:text-white focus:outline-none cursor-pointer"
+              className="md:hidden p-1.5 text-[#DDD7E3] hover:text-white focus:outline-none cursor-pointer rounded-lg hover:bg-white/5"
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>

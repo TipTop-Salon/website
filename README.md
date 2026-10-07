@@ -218,13 +218,13 @@ In Vercel Project Settings ➔ **Environment Variables**, add:
 
 *(Note: If not set in Vercel env vars, you can also connect dynamically at runtime by navigating to `/admin` and entering credentials in the Supabase tab.)*
 
-### Step 4: SPA Routing Support
-The included `vercel.json` ensures that deep links like `/services`, `/booking`, and `/admin` redirect cleanly to `/index.html`:
+### Step 4: SPA Routing & Asset Rewrite Rules
+The included `vercel.json` ensures that deep links like `/services`, `/booking`, and `/admin` redirect cleanly to `/index.html` without corrupting static asset files or images:
 ```json
 {
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/|images/|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]
@@ -233,7 +233,37 @@ The included `vercel.json` ensures that deep links like `/services`, `/booking`,
 
 ---
 
-## 9. Error Handling & Offline-First Resilience
+## 9. Media & Asset Architecture (Supabase Storage vs Local Assets)
+
+### Why Images Initially Failed on Vercel
+1. **Local Assets in Repositories:** When deploying via GitHub to Vercel, large local binary image assets in `/public/images/` may be untracked or omitted during repository forks and migrations.
+2. **SPA Rewrite Masking:** Standard `/(.*)` rewrites return `index.html` (text/html) for missing images, triggering MIME-type decode errors in browser `<img>` tags.
+3. **The Solution:**
+   - **Curated High-Res CDN Fallbacks (`CDN_IMAGES` in `src/lib/imageHelper.ts`):** Every treatment, package, gallery item, and hero section defaults to ultra-reliable, high-resolution luxury salon CDN photography.
+   - **Resilient Error Handler (`handleImageError`):** Automatically swaps broken or missing image links with matching category photography (shears hair sculpting, luxury nails, basalt stone spa, salon ambiance) without infinite retry loops.
+   - **Supabase Storage Bucket (`salon-media`):** All gallery photos and treatment images uploaded in the Admin Portal are sent directly to Supabase Storage, generating permanent public CDN URLs saved into PostgreSQL.
+
+### Setting Up Supabase Storage (`salon-media`)
+1. In your **Supabase Dashboard**, open **Storage** ➔ **Buckets**.
+2. Create a new bucket named **`salon-media`** and check **"Public Bucket"**.
+3. Under **Storage Policies**, ensure read access is enabled for public users, and insert/update is allowed for authenticated users (these policies are also automatically generated in the Supabase SQL migration script).
+4. In the Admin Portal at `/admin` ➔ **Gallery** or **Services**, uploading a photo directly transmits the file to `salon-media` and stores the resulting public URL.
+
+---
+
+## 10. Mobile Responsiveness & Zero-Overflow Architecture
+
+To guarantee flawless display across all mobile device viewports (iPhone SE 375px, Android 360px, modern smartphones 390px–430px):
+1. **Viewport Containment:** `html, body` and the root application container in `src/App.tsx` enforce `overflow-x: hidden; width: 100%; max-width: 100vw;`.
+2. **Navbar Responsive Hierarchy:** 
+   - Logo wordmark uses `truncate` and `min-w-0 shrink` to prevent pushing navigation actions offscreen.
+   - Primary header displays a compact `[Book]` action on narrow phones (`sm:hidden`) and full `[Book Appointment]` on larger screens (`hidden sm:flex`).
+3. **Unconstrained Flex Row Prevention:** All pre-footer, copyright, and utility bar rows explicitly use `flex-wrap` and `justify-center` so footer badges cannot force horizontal scroll width beyond the viewport.
+4. **Hero Typography Scaling:** Fluid font scaling (`text-3xl sm:text-5xl md:text-6xl lg:text-7xl`) with `break-words` and `text-balance` ensures titles fit comfortably on compact screens.
+
+---
+
+## 11. Error Handling & Offline-First Resilience
 
 - **Graceful Cloud Downtime:** If the Supabase API is momentarily slow or unreachable, `SalonContext` catches the network exception, serves the cached catalog without interruption, and presents a polite notice with a "Retry Sync" action in the back-office.
 - **In-App Confirmation Modals:** All deletions (services, packages, categories, branches, photos, users) use custom in-app modal confirmation dialogs rather than browser `window.confirm()`, ensuring seamless operation within iframes and restricted browser environments.
@@ -241,13 +271,14 @@ The included `vercel.json` ensures that deep links like `/services`, `/booking`,
 
 ---
 
-## 10. Guidelines for AI Agents & Future Contributors
+## 12. Guidelines & Instructions for AI Agents & Future Contributors
 
 When extending or maintaining this project:
-1. **Never use `window.confirm()` or `window.alert()`:** Modern browsers and iframes suppress native alert dialogs. Always use state-driven React modals.
-2. **Preserve Branch Scoping:** Every booking and branch-specific service must respect `branchId`. Global items use `branchId: 'all'` or include all branch IDs in `branchIds: string[]`.
+1. **Zero Browser Alerts/Confirms:** NEVER use `window.confirm()` or `window.alert()`. Modern browser sandboxes and iframes suppress them. Always use React state-driven modals.
+2. **Preserve Branch Isolation:** Every booking and branch-specific service must respect `branchId`. Global items use `branchId: 'all'` or include all branch IDs in `branchIds: string[]`.
 3. **Keep Database & Types Synchronized:** When modifying schema attributes in `src/types/salon.ts`, ensure corresponding columns in `src/lib/supabase.ts` (`SUPABASE_CLEAN_SCHEMA_SQL`) and mapper functions in `SalonContext.tsx` are updated simultaneously.
-4. **Verify TypeScript & Builds:** Before submitting changes, always execute:
+4. **Mobile-First Discipline:** Never add fixed pixel widths (`w-[500px]`) or unwrapped flex containers (`flex` without `flex-wrap` on long item lists) that could cause horizontal overflow.
+5. **Verify TypeScript & Builds:** Before submitting changes, always execute:
    ```bash
    npm run lint   # Verifies TypeScript types with zero errors
    npm run build  # Builds the production Vite bundle

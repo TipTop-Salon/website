@@ -1,4 +1,5 @@
 import { ServiceItem, BeautyPackage, GalleryItem, SalonSettings, Branch, CategoryItem, AppUser } from '../types/salon';
+import { CDN_IMAGES } from '../lib/imageHelper';
 
 export const INITIAL_BRANCHES: Branch[] = [
   {
@@ -138,7 +139,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 750,
     durationMinutes: 60,
     description: 'Custom anatomical shears haircut personalized to your facial bone structure and hair texture, accompanied by an organic botanical clarifying scalp wash and blowout finish.',
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairShears,
     features: [
       'Tailored consultation with Master Stylist',
       'Botanical scalp scrub & deep moisture mask',
@@ -156,7 +157,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 650,
     durationMinutes: 50,
     description: 'High-gloss couture gel manicure featuring hypoallergenic builder gel, immaculate e-file Russian cuticle refinement, and mirror chrome or gold leaf finish.',
-    imageUrl: '/src/assets/images/service_luxury_manicure_1790223356476.jpg',
+    imageUrl: CDN_IMAGES.nailsCouture,
     features: [
       'Dry Russian precision cuticle detailing',
       'Non-toxic strengthening builder base',
@@ -174,7 +175,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 850,
     durationMinutes: 75,
     description: 'Deep restorative foot ritual featuring warm Himalayan mineral foot soak, eucalyptus sugar exfoliation, volcanic basalt stone massage, and breathable high-shine polish.',
-    imageUrl: '/src/assets/images/service_pedicure_spa_1790223369654.jpg',
+    imageUrl: CDN_IMAGES.pedicureSpa,
     features: [
       'Warm rose & dead sea mineral foot bath',
       'Aromatherapeutic brown sugar polish',
@@ -192,7 +193,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 3800,
     durationMinutes: 150,
     description: 'Sun-kissed hand-painted multidimensional color seamless blend, followed by an acidic bonding gloss treatment for glass-like reflection.',
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairBalayage,
     features: [
       'Custom freehand balayage painting',
       'Bond-builder protective infusion',
@@ -210,7 +211,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 1450,
     durationMinutes: 90,
     description: 'Soft gel full-coverage extensions providing natural-looking length with zero damage to the natural nail plate, paired with editorial nail art.',
-    imageUrl: '/src/assets/images/service_luxury_manicure_1790223356476.jpg',
+    imageUrl: CDN_IMAGES.nailsGelX,
     features: [
       'Full-cover soft gel tips tailored to nail beds',
       'Dry cuticle care for long-lasting retention',
@@ -228,7 +229,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     price: 1200,
     durationMinutes: 60,
     description: 'Japanese-style head spa incorporating high-definition trichoscopic scalp analysis, waterfall hydro-mist steam, and pressure-point neck massage.',
-    imageUrl: '/src/assets/images/about_salon_interior_1790223381558.jpg',
+    imageUrl: CDN_IMAGES.scalpHydro,
     features: [
       'Micro-camera scalp & follicle diagnosis',
       'Warm herbal water halo cascade ring',
@@ -256,7 +257,7 @@ export const INITIAL_PACKAGES: BeautyPackage[] = [
       'Aura Botanical Stone Pedicure with Foot Mask',
       'Complimentary organic herbal tea or specialty beverage'
     ],
-    imageUrl: '/src/assets/images/hero_salon_ambiance_1790223323507.jpg',
+    imageUrl: CDN_IMAGES.hero,
     branchIds: [],
     isPopular: true,
     badgeText: 'Most Requested',
@@ -275,7 +276,7 @@ export const INITIAL_PACKAGES: BeautyPackage[] = [
       'Deluxe Rose Petal Manicure & Hand Peel',
       'Take-home touch-up styling kit'
     ],
-    imageUrl: '/src/assets/images/service_luxury_manicure_1790223356476.jpg',
+    imageUrl: CDN_IMAGES.nailsCouture,
     branchIds: ['silang-premier'],
     isPopular: false,
     badgeText: 'Flagship Exclusive',
@@ -294,7 +295,7 @@ export const INITIAL_PACKAGES: BeautyPackage[] = [
       'Express Russian Cuticle Care & Gel Polish',
       'Quick tension-release neck massage'
     ],
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairShears,
     isPopular: false,
     badgeText: 'Dual-Tech Service',
   }
@@ -305,42 +306,42 @@ export const INITIAL_GALLERY: GalleryItem[] = [
     id: 'gal-1',
     title: 'Precision Shears Detailing',
     category: 'hair',
-    imageUrl: '/src/assets/images/service_precision_shears_1790223342879.jpg',
+    imageUrl: CDN_IMAGES.hairShears,
     caption: 'Clean, architectural angles sculpted with Japanese steel shears for natural volume and movement.'
   },
   {
     id: 'gal-2',
     title: 'Glazed Almond Couture Nails',
     category: 'nails',
-    imageUrl: '/src/assets/images/service_luxury_manicure_1790223356476.jpg',
+    imageUrl: CDN_IMAGES.nailsCouture,
     caption: 'Soft nude overlay with micro gold leaf inlay and ultra-glossy glass topcoat.'
   },
   {
     id: 'gal-3',
     title: 'The Serene Sanctuary Lounge',
     category: 'ambiance',
-    imageUrl: '/src/assets/images/hero_salon_ambiance_1790223323507.jpg',
+    imageUrl: CDN_IMAGES.ambiance,
     caption: 'Warm ambient illumination and deep forest green velvet stations designed for calm and privacy.'
   },
   {
     id: 'gal-4',
     title: 'Basalt Stone Pedicure Suite',
-    category: 'pedicure',
-    imageUrl: '/src/assets/images/service_pedicure_spa_1790223369654.jpg',
+    category: 'spa',
+    imageUrl: CDN_IMAGES.pedicureSpa,
     caption: 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'
   },
   {
     id: 'gal-5',
     title: 'Boutique Reception & Care Bar',
     category: 'ambiance',
-    imageUrl: '/src/assets/images/about_salon_interior_1790223381558.jpg',
+    imageUrl: CDN_IMAGES.interiorReception,
     caption: 'Fluted wood detailing, warm curved archways, and organic plant botanicals.'
   },
   {
     id: 'gal-6',
     title: 'French Micro-Line Architecture',
     category: 'nails',
-    imageUrl: '/src/assets/images/service_luxury_manicure_1790223356476.jpg',
+    imageUrl: CDN_IMAGES.nailsGelX,
     caption: 'Ultra-fine chrome metallic tips on square-oval Russian builder gel structure.'
   }
 ];

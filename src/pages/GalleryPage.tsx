@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { X, ZoomIn, Sparkles, Filter } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
 import { GalleryItem } from '../types/salon';
+import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const GalleryPage: React.FC = () => {
   const { gallery, categories: salonCategories } = useSalon();
@@ -90,9 +91,10 @@ export const GalleryPage: React.FC = () => {
             >
               <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#1C1221]">
                 <img
-                  src={item.imageUrl}
+                  src={getImageUrl(item.imageUrl)}
                   alt={item.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                  onError={handleImageError}
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1C1221]/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-5">
@@ -142,9 +144,10 @@ export const GalleryPage: React.FC = () => {
 
             <div className="relative aspect-[16/10] w-full bg-black">
               <img
-                src={selectedPhoto.imageUrl}
+                src={getImageUrl(selectedPhoto.imageUrl)}
                 alt={selectedPhoto.title}
                 className="w-full h-full object-contain"
+                onError={handleImageError}
                 referrerPolicy="no-referrer"
               />
             </div>

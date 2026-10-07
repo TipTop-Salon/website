@@ -1,6 +1,7 @@
 import React from 'react';
 import { Scissors, Sparkles, Award, Shield, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
+import { getImageUrl, handleImageError, CDN_IMAGES } from '../lib/imageHelper';
 
 export const AboutPage: React.FC = () => {
   const { settings, navigate, openBookingModal } = useSalon();
@@ -91,9 +92,10 @@ export const AboutPage: React.FC = () => {
           <div className="lg:col-span-6">
             <div className="relative rounded-lg overflow-hidden border border-[#ECEBF0] shadow-xl">
               <img
-                src="/src/assets/images/about_salon_interior_1790223381558.jpg"
+                src={getImageUrl(CDN_IMAGES.interiorReception)}
                 alt="Tiptop Salon Interior and Reception"
                 className="w-full h-full object-cover"
+                onError={handleImageError}
                 referrerPolicy="no-referrer"
               />
             </div>
