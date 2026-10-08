@@ -1,22 +1,62 @@
-import React, { useState } from 'react';
-import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Facebook, Instagram, Navigation } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Facebook, Instagram, Navigation, Sparkles } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
 
 export const ContactPage: React.FC = () => {
-  const { settings, openBookingModal, branches, activeBranchId, activeBranch, setActiveBranchId } = useSalon();
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    inquiryType: 'Appointment Inquiry',
-    message: ''
+  const { currentPath, settings, openBookingModal, branches, activeBranchId, activeBranch, setActiveBranchId, createContactMessage } = useSalon();
+  
+  const checkIsBridal = (pathStr?: string) => {
+    const combined = ((pathStr || '') + ' ' + (typeof window !== 'undefined' ? window.location.search + ' ' + window.location.hash : '')).toLowerCase();
+    return combined.includes('bridal') || combined.includes('events') || combined.includes('group');
+  };
+
+  const [formData, setFormData] = useState(() => {
+    const isBridal = checkIsBridal();
+    return {
+      name: '',
+      email: '',
+      phone: '',
+      inquiryType: isBridal ? 'Bridal & Group Booking' : 'Appointment Inquiry',
+      message: isBridal
+        ? 'Hello, we are inquiring about private atelier reservation / bridal group packages. Please let us know availability and consultation details.'
+        : ''
+    };
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Synchronize when currentPath or navigation query updates
+  useEffect(() => {
+    if (checkIsBridal(currentPath)) {
+      setFormData(prev => ({
+        ...prev,
+        inquiryType: 'Bridal & Group Booking',
+        message: prev.message && prev.message !== 'Hello, we are inquiring about private atelier reservation / bridal group packages. Please let us know availability and consultation details.'
+          ? prev.message
+          : 'Hello, we are inquiring about private atelier reservation / bridal group packages. Please let us know availability and consultation details.'
+      }));
+    }
+  }, [currentPath]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.email || !formData.message) return;
-    setIsSubmitted(true);
+    if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      await createContactMessage({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        inquiryType: formData.inquiryType,
+        message: formData.message.trim(),
+        branchId: activeBranchId !== 'all' ? activeBranch?.id : undefined,
+        branchName: activeBranchId !== 'all' ? activeBranch?.name : 'General Concierge (All Branches)',
+      });
+      setIsSubmitted(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -65,9 +105,17 @@ export const ContactPage: React.FC = () => {
             ) : (
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
-                  <span className="text-[#7B2D97] text-xs uppercase tracking-widest font-semibold block mb-1">
-                    Send a Direct Note
-                  </span>
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                    <span className="text-[#7B2D97] text-xs uppercase tracking-widest font-semibold block">
+                      Send a Direct Note
+                    </span>
+                    {formData.inquiryType === 'Bridal & Group Booking' && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#E5A93C]/15 text-[#9E6E17] border border-[#E5A93C]/30">
+                        <Sparkles className="w-3 h-3 text-[#E5A93C]" />
+                        Private Atelier & Events Inquiry
+                      </span>
+                    )}
+                  </div>
                   <h2 className="font-serif text-2xl sm:text-3xl text-[#1C1221] font-light">
                     How May We Assist You?
                   </h2>
@@ -155,10 +203,11 @@ export const ContactPage: React.FC = () => {
                   </span>
                   <button
                     type="submit"
-                    className="px-6 py-3 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-widest font-semibold rounded shadow transition-all duration-200 flex items-center gap-2 cursor-pointer"
+                    disabled={isSubmitting}
+                    className="px-6 py-3 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-widest font-semibold rounded shadow transition-all duration-200 flex items-center gap-2 cursor-pointer disabled:opacity-60"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>Send Message</span>
+                    <span>{isSubmitting ? 'Sending...' : 'Send Message'}</span>
                   </button>
                 </div>
               </form>
@@ -173,18 +222,9 @@ export const ContactPage: React.FC = () => {
                 <h3 className="font-serif text-2xl font-light">
                   Salon Information
                 </h3>
-                {/* Branch Switcher inside Contact */}
-                <select
-                  value={activeBranchId}
-                  onChange={(e) => setActiveBranchId(e.target.value)}
-                  className="bg-[#291B30] text-[#E5A93C] text-xs font-semibold px-2.5 py-1.5 rounded border border-[#3D294B] focus:outline-none cursor-pointer"
-                >
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id} className="bg-[#1C1221] text-white">
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
+                <span className="bg-[#291B30] text-[#E5A93C] text-[11px] font-semibold px-2.5 py-1 rounded border border-[#3D294B]">
+                  {activeBranchId === 'all' ? `All Atelier Locations (${branches.length})` : activeBranch?.name}
+                </span>
               </div>
 
               <div className="space-y-4 text-xs text-[#DDD7E3]">

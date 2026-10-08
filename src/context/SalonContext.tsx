@@ -9,6 +9,7 @@ import {
   CategoryItem,
   AppUser,
   UserRole,
+  ContactMessage,
 } from '../types/salon';
 import {
   INITIAL_SERVICES,
@@ -18,6 +19,7 @@ import {
   INITIAL_BRANCHES,
   INITIAL_CATEGORIES,
   INITIAL_USERS,
+  INITIAL_MESSAGES,
 } from '../data/initialData';
 import { getSupabaseClient } from '../lib/supabase';
 
@@ -33,6 +35,7 @@ interface SalonContextType {
   bookings: Booking[];
   gallery: GalleryItem[];
   settings: SalonSettings;
+  messages: ContactMessage[];
   isLoading: boolean;
 
   // Multi-Branch Management
@@ -58,6 +61,11 @@ interface SalonContextType {
   deleteUser: (id: string) => Promise<void>;
   isSuperAdmin: boolean;
   isStaff: boolean;
+
+  // Contact Messages & Inquiries
+  createContactMessage: (msg: Omit<ContactMessage, 'id' | 'createdAt' | 'status'>) => Promise<ContactMessage>;
+  updateMessageStatus: (id: string, status: ContactMessage['status'], replyNotes?: string) => Promise<void>;
+  deleteContactMessage: (id: string) => Promise<void>;
 
   // Supabase Status
   supabaseConnected: boolean;
@@ -113,6 +121,7 @@ const LOCAL_STORAGE_KEYS = {
   ACTIVE_BRANCH_ID: 'tiptop_active_branch_id',
   CATEGORIES: 'tiptop_categories_data',
   USERS: 'tiptop_users_data',
+  MESSAGES: 'tiptop_messages_data',
   AUTH: 'tiptop_admin_authenticated',
   ADMIN_EMAIL: 'tiptop_admin_email',
   CURRENT_USER: 'tiptop_current_user',
@@ -149,11 +158,28 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return INITIAL_BRANCHES;
   });
 
+  const ALL_BRANCHES_SUMMARY: Branch = {
+    id: 'all',
+    name: 'All Branches',
+    city: 'Cavite & Metro South',
+    address: 'Silang, Tagaytay, Dasmariñas, Kawit & General Trias',
+    phone: '(046) 414-2938',
+    email: 'concierge@tiptopshears.com',
+    operatingHours: '10:00 AM – 9:00 PM Daily',
+    googleMapsUrl: 'https://maps.google.com/?q=Tiptop+Shears+Nails+Cavite',
+    mallName: '5 Cavite Locations',
+    isActive: true,
+  };
+
   const [activeBranchId, setActiveBranchIdState] = useState<string>(() => {
-    return localStorage.getItem(LOCAL_STORAGE_KEYS.ACTIVE_BRANCH_ID) || 'silang-premier';
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.ACTIVE_BRANCH_ID);
+    if (!saved || saved === 'silang-premier') return 'all';
+    return saved;
   });
 
-  const activeBranch = branches.find(b => b.id === activeBranchId) || branches[0] || INITIAL_BRANCHES[0];
+  const activeBranch = activeBranchId === 'all'
+    ? ALL_BRANCHES_SUMMARY
+    : (branches.find(b => b.id === activeBranchId) || ALL_BRANCHES_SUMMARY);
 
   const setActiveBranchId = (id: string) => {
     setActiveBranchIdState(id);
@@ -346,6 +372,19 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return INITIAL_SETTINGS;
   });
 
+  const [messages, setMessages] = useState<ContactMessage[]>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.MESSAGES);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing cached messages', e);
+      }
+    }
+    return INITIAL_MESSAGES;
+  });
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // Supabase status
@@ -477,6 +516,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     localStorage.setItem(LOCAL_STORAGE_KEYS.GALLERY, JSON.stringify(gallery));
   }, [gallery]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.MESSAGES, JSON.stringify(messages));
+  }, [messages]);
 
   // Check Supabase connection on load
   useEffect(() => {
@@ -657,6 +700,29 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         console.warn('Settings sync note:', err);
       }
 
+      // Fetch contact_messages if table exists
+      try {
+        const { data: mData, error: mErr } = await client.from('contact_messages').select('*').order('created_at', { ascending: false });
+        if (!mErr && mData && mData.length > 0) {
+          const mappedMessages: ContactMessage[] = mData.map(item => ({
+            id: item.id,
+            name: item.name,
+            email: item.email,
+            phone: item.phone || '',
+            inquiryType: item.inquiry_type || 'Appointment Inquiry',
+            message: item.message,
+            branchId: item.branch_id || undefined,
+            branchName: item.branch_name || undefined,
+            status: item.status || 'new',
+            replyNotes: item.reply_notes || undefined,
+            createdAt: item.created_at,
+          }));
+          setMessages(mappedMessages);
+        }
+      } catch (err) {
+        console.warn('Contact messages sync note:', err);
+      }
+
       setSupabaseSyncError(null);
     } catch (e: any) {
       console.warn('Sync error with Supabase, staying with local state:', e);
@@ -805,10 +871,34 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         );
       }
 
+      // 9. Contact Messages & Inquiries
+      let messagesWarning = '';
+      if (messages.length > 0) {
+        const { error: msgErr } = await client.from('contact_messages').upsert(
+          messages.map(m => ({
+            id: m.id,
+            name: m.name,
+            email: m.email,
+            phone: m.phone || null,
+            inquiry_type: m.inquiryType,
+            message: m.message,
+            branch_id: m.branchId || null,
+            branch_name: m.branchName || null,
+            status: m.status,
+            reply_notes: m.replyNotes || null,
+            created_at: m.createdAt,
+          }))
+        );
+        if (msgErr) {
+          console.warn('Could not sync contact_messages to Supabase:', msgErr);
+          messagesWarning = `Tables 1-8 synced! Note: 'contact_messages' table was not found in Supabase (run Clean Schema in Supabase SQL editor to include it).`;
+        }
+      }
+
       await syncWithSupabase();
       return {
         success: true,
-        message: `Full Cloud Sync Complete! All 8 tables synchronized with Supabase: ${branches.length} branches, ${categories.length} categories, ${services.length} services, ${packages.length} packages, ${bookings.length} bookings, ${gallery.length} gallery photos, and ${users.length} users.`
+        message: messagesWarning || `Full Cloud Sync Complete! All 9 tables synchronized with Supabase: ${branches.length} branches, ${categories.length} categories, ${services.length} services, ${packages.length} packages, ${bookings.length} bookings, ${gallery.length} gallery photos, ${users.length} users, and ${messages.length} inquiries.`
       };
     } catch (err: any) {
       console.error('Cloud sync error:', err);
@@ -1395,6 +1485,64 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  // Contact Inquiries Operations
+  const createContactMessage = async (msg: Omit<ContactMessage, 'id' | 'createdAt' | 'status'>): Promise<ContactMessage> => {
+    const newMsg: ContactMessage = {
+      ...msg,
+      id: `msg-${Date.now()}`,
+      status: 'new',
+      createdAt: new Date().toISOString(),
+    };
+    setMessages(prev => [newMsg, ...prev]);
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client
+        .from('contact_messages')
+        .insert([{
+          id: newMsg.id,
+          name: newMsg.name,
+          email: newMsg.email,
+          phone: newMsg.phone || '',
+          inquiry_type: newMsg.inquiryType,
+          message: newMsg.message,
+          branch_id: newMsg.branchId || null,
+          branch_name: newMsg.branchName || null,
+          status: newMsg.status,
+          created_at: newMsg.createdAt,
+        }])
+        .then(({ error }) => {
+          if (error) console.warn('Supabase contact message sync notice:', error);
+        });
+    }
+
+    return newMsg;
+  };
+
+  const updateMessageStatus = async (id: string, status: ContactMessage['status'], replyNotes?: string): Promise<void> => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, status, ...(replyNotes !== undefined ? { replyNotes } : {}) } : m));
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      const payload: Record<string, any> = { status };
+      if (replyNotes !== undefined) payload.reply_notes = replyNotes;
+      client.from('contact_messages').update(payload).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase contact message update note:', error);
+      });
+    }
+  };
+
+  const deleteContactMessage = async (id: string): Promise<void> => {
+    setMessages(prev => prev.filter(m => m.id !== id));
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client.from('contact_messages').delete().eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase contact message delete note:', error);
+      });
+    }
+  };
+
   // Booking Modal
   const openBookingModal = (item?: ServiceItem | BeautyPackage) => {
     setPreselectedItem(item || null);
@@ -1423,6 +1571,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         updateGalleryItem,
         deleteGalleryItem,
         settings,
+        messages,
+        createContactMessage,
+        updateMessageStatus,
+        deleteContactMessage,
         isLoading,
         branches,
         activeBranchId,

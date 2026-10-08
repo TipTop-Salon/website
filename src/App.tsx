@@ -39,13 +39,16 @@ const AppContent: React.FC = () => {
   }
 
   const renderRoute = () => {
+    // Extract base pathname without query parameters or hash fragments
+    const basePath = currentPath.split('?')[0].split('#')[0] || '/';
+
     // Dynamic Service detail routing (/services/:id)
-    if (currentPath.startsWith('/services/') && currentPath.length > 10) {
+    if (basePath.startsWith('/services/') && basePath.length > 10) {
       return <ServiceDetailPage />;
     }
 
     // Standard static routes
-    switch (currentPath) {
+    switch (basePath) {
       case '/services':
         return <ServicesPage />;
       case '/packages':

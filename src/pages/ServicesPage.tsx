@@ -1,39 +1,98 @@
-import React, { useState } from 'react';
-import { Clock, Search, Scissors, Sparkles, Check, ArrowRight, MapPin, Filter } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Clock, Search, Scissors, Check, ArrowRight, MapPin, X, Sparkles, Building2 } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
 import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const ServicesPage: React.FC = () => {
-  const { services, categories: dynamicCategories, branches, activeBranchId, activeBranch, navigate, openBookingModal } = useSalon();
+  const {
+    services,
+    categories: dynamicCategories,
+    branches,
+    activeBranchId,
+    setActiveBranchId,
+    navigate,
+    openBookingModal
+  } = useSalon();
+
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [filterByBranch, setFilterByBranch] = useState<boolean>(false);
 
-  const categoryTabs = [
-    { id: 'all', label: 'All Services' },
-    ...dynamicCategories
-      .filter((c) => c.isActive)
-      .map((c) => ({ id: c.slug, label: c.name })),
-  ];
+  // Compute category tabs dynamically - ONLY include categories with actual available services under activeBranchId!
+  const categoryTabs = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let totalInBranch = 0;
 
-  const filteredServices = services.filter((service) => {
-    const matchesCategory =
-      selectedCategory === 'all' || service.category === selectedCategory;
-    const matchesSearch =
-      service.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      service.categoryLabel.toLowerCase().includes(searchQuery.toLowerCase());
+    services.forEach((service) => {
+      const isAvailableAtBranch =
+        activeBranchId === 'all' ||
+        !service.branchIds ||
+        service.branchIds.length === 0 ||
+        service.branchIds.includes('all') ||
+        service.branchIds.includes(activeBranchId);
 
-    const isAvailableAtActiveBranch =
-      !service.branchIds ||
-      service.branchIds.length === 0 ||
-      service.branchIds.includes('all') ||
-      service.branchIds.includes(activeBranchId);
+      if (isAvailableAtBranch) {
+        counts[service.category] = (counts[service.category] || 0) + 1;
+        totalInBranch++;
+      }
+    });
 
-    const matchesBranch = filterByBranch ? isAvailableAtActiveBranch : true;
+    const tabs: { id: string; label: string; count: number }[] = [
+      { id: 'all', label: 'All Services', count: totalInBranch }
+    ];
 
-    return matchesCategory && matchesSearch && matchesBranch;
-  });
+    // Exclude empty categories (0 services) and order by displayOrder
+    dynamicCategories
+      .filter((c) => c.isActive && (counts[c.slug] || 0) > 0)
+      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
+      .forEach((cat) => {
+        tabs.push({
+          id: cat.slug,
+          label: cat.name,
+          count: counts[cat.slug] || 0
+        });
+      });
+
+    return tabs;
+  }, [services, dynamicCategories, activeBranchId]);
+
+  // If active category becomes empty under current branch filter, reset to 'all'
+  useEffect(() => {
+    if (selectedCategory !== 'all' && !categoryTabs.some((t) => t.id === selectedCategory)) {
+      setSelectedCategory('all');
+    }
+  }, [categoryTabs, selectedCategory]);
+
+  const filteredServices = useMemo(() => {
+    return services.filter((service) => {
+      const matchesCategory =
+        selectedCategory === 'all' || service.category === selectedCategory;
+
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        service.title.toLowerCase().includes(q) ||
+        service.description.toLowerCase().includes(q) ||
+        service.categoryLabel.toLowerCase().includes(q) ||
+        (service.features && service.features.some((f) => f.toLowerCase().includes(q)));
+
+      const matchesBranch =
+        activeBranchId === 'all' ||
+        !service.branchIds ||
+        service.branchIds.length === 0 ||
+        service.branchIds.includes('all') ||
+        service.branchIds.includes(activeBranchId);
+
+      return matchesCategory && matchesSearch && matchesBranch;
+    });
+  }, [services, selectedCategory, searchQuery, activeBranchId]);
+
+  const resetAllFilters = () => {
+    setSelectedCategory('all');
+    setSearchQuery('');
+    if (activeBranchId !== 'all') {
+      setActiveBranchId('all');
+    }
+  };
 
   return (
     <div className="bg-[#FAFAFB] min-h-screen">
@@ -54,69 +113,106 @@ export const ServicesPage: React.FC = () => {
 
       {/* Filter and Search Bar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4 pb-6 border-b border-[#ECEBF0]">
-          {/* Category Tabs (Segmented controls) */}
-          <div className="flex items-center gap-1.5 p-1 bg-[#EDEBF2] border border-[#DDD9E5] rounded-lg w-full md:w-auto overflow-x-auto">
-            {categoryTabs.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                  selectedCategory === cat.id
-                    ? 'bg-[#7B2D97] text-white shadow-sm'
-                    : 'text-[#6B6175] hover:text-[#1C1221] hover:bg-white/60'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
+        <div className="bg-white rounded-2xl border border-[#ECEBF0] p-4 sm:p-6 shadow-xs space-y-5">
+          {/* Top Control Bar: Search Input & Current Filter Summary */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-4 border-b border-[#ECEBF0]">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#1C1221]">
+                Treatment Categories
+              </span>
+              <span className="text-xs text-[#8A7E93]">
+                ({filteredServices.length} {filteredServices.length === 1 ? 'service' : 'services'} available)
+              </span>
+            </div>
 
-          {/* Search & Branch Filter */}
-          <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
-            <button
-              onClick={() => setFilterByBranch(!filterByBranch)}
-              className={`px-3 py-2 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer border ${
-                filterByBranch
-                  ? 'bg-[#7B2D97] text-white border-[#7B2D97] shadow-sm'
-                  : 'bg-white text-[#6B6175] border-[#D9D6E2] hover:text-[#1C1221]'
-              }`}
-              title="Filter treatments available at your selected branch"
-            >
-              <MapPin className="w-3.5 h-3.5 text-[#E5A93C]" />
-              <span>{filterByBranch ? `${activeBranch?.name} Only` : 'Show All Branches'}</span>
-            </button>
-
-            <div className="relative w-full sm:w-64">
+            {/* Treatment Search Box */}
+            <div className="relative w-full sm:w-80">
               <Search className="w-4 h-4 text-[#9B8DA6] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search treatments..."
+                placeholder="Search haircuts, gel-x, spa..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-white border border-[#D9D6E2] rounded-md text-xs text-[#1C1221] focus:outline-none focus:ring-2 focus:ring-[#7B2D97]"
+                className="w-full pl-9 pr-8 py-2.5 bg-[#FAFAFB] border border-[#D9D6E2] rounded-xl text-xs text-[#1C1221] focus:outline-none focus:ring-2 focus:ring-[#7B2D97] focus:bg-white transition-all"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#9B8DA6] hover:text-[#1C1221] p-0.5 cursor-pointer"
+                  aria-label="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
+
+          {/* Category Filter Pills (Wrap neatly, no weird horizontal scrollbars, no empty categories) */}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {categoryTabs.map((cat) => {
+              const isSelected = selectedCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all cursor-pointer flex items-center gap-2 border ${
+                    isSelected
+                      ? 'bg-[#7B2D97] text-white border-[#7B2D97] shadow-sm'
+                      : 'bg-[#FAFAFB] text-[#6B6175] border-[#ECEBF0] hover:border-[#7B2D97]/40 hover:text-[#1C1221] hover:bg-white'
+                  }`}
+                >
+                  <span>{cat.label}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none ${
+                      isSelected
+                        ? 'bg-white/25 text-white'
+                        : 'bg-[#EAE8F0] text-[#7B2D97]'
+                    }`}
+                  >
+                    {cat.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Branch Status Strip (Reflects header branch selection) */}
+          {activeBranchId !== 'all' && (
+            <div className="flex items-center justify-between flex-wrap gap-2 bg-[#FAF5FE] border border-[#E9D9F2] px-4 py-2.5 rounded-xl text-xs text-[#7B2D97]">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#7B2D97] shrink-0" />
+                <span>
+                  Showing treatments available at <strong className="text-[#1C1221]">{branches.find(b => b.id === activeBranchId)?.name || activeBranchId}</strong> (selected in header)
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveBranchId('all')}
+                className="text-xs font-semibold underline underline-offset-2 hover:text-[#581A6F] cursor-pointer"
+              >
+                Show All Branches
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Services Grid */}
         <div className="py-8">
           {filteredServices.length === 0 ? (
-            <div className="text-center py-16 bg-white rounded-lg border border-[#ECEBF0] space-y-3">
-              <Scissors className="w-8 h-8 text-[#9B8DA6] mx-auto" />
-              <h3 className="font-serif text-xl text-[#1C1221]">No services found</h3>
-              <p className="text-xs text-[#6B6175]">
-                Try adjusting your search terms or view another category.
+            <div className="text-center py-16 bg-white rounded-2xl border border-[#ECEBF0] p-8 space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-full bg-[#FAF5FE] text-[#7B2D97] flex items-center justify-center mx-auto">
+                <Scissors className="w-6 h-6" />
+              </div>
+              <h3 className="font-serif text-xl font-medium text-[#1C1221]">No treatments match your criteria</h3>
+              <p className="text-xs text-[#6B6175] max-w-md mx-auto">
+                {activeBranchId !== 'all'
+                  ? `No treatments in this category at this location. Try switching branch in the header or showing all branches.`
+                  : 'Try adjusting your search query or selecting a different category.'}
               </p>
               <button
-                onClick={() => {
-                  setSelectedCategory('all');
-                  setSearchQuery('');
-                }}
-                className="text-xs text-[#7B2D97] font-semibold underline underline-offset-2"
+                onClick={resetAllFilters}
+                className="px-4 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white text-xs uppercase tracking-wider font-semibold rounded-lg transition-colors cursor-pointer mt-2"
               >
-                Reset Filters
+                Reset All Filters
               </button>
             </div>
           ) : (
@@ -124,7 +220,7 @@ export const ServicesPage: React.FC = () => {
               {filteredServices.map((service) => (
                 <div
                   key={service.id}
-                  className="group bg-white rounded-lg border border-[#ECEBF0] overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col justify-between"
+                  className="group bg-white rounded-xl border border-[#ECEBF0] overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col justify-between"
                 >
                   {/* Image */}
                   <div className="relative aspect-[16/10] w-full overflow-hidden bg-[#1C1221]">
@@ -157,21 +253,26 @@ export const ServicesPage: React.FC = () => {
                         {service.title}
                       </h2>
 
-                      {/* Branch Exclusivity Tag (Option C) */}
+                      {/* Branch Exclusivity Tag */}
                       {service.branchIds &&
                         service.branchIds.length > 0 &&
                         !service.branchIds.includes('all') &&
-                        service.branchIds.length < branches.length && (
-                          <div className="flex items-center gap-1.5 text-[10px] text-[#7B2D97] bg-[#F7F1FB] border border-[#E8DDF1] px-2 py-0.5 rounded w-fit mb-2.5 font-medium">
-                            <MapPin className="w-3 h-3 text-[#E5A93C] shrink-0" />
-                            <span>
-                              Exclusively at:{' '}
-                              {service.branchIds
-                                .map((id) => branches.find((b) => b.id === id)?.mallName || id)
-                                .join(', ')}
-                            </span>
-                          </div>
-                        )}
+                        service.branchIds.length < branches.length ? (
+                        <div className="flex items-center gap-1.5 text-[10px] text-[#7B2D97] bg-[#FAF5FE] border border-[#E9D9F2] px-2.5 py-1 rounded-md w-fit mb-3 font-medium">
+                          <MapPin className="w-3 h-3 text-[#E5A93C] shrink-0" />
+                          <span>
+                            Available at:{' '}
+                            {service.branchIds
+                              .map((id) => branches.find((b) => b.id === id)?.mallName || id)
+                              .join(', ')}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md w-fit mb-3 font-medium">
+                          <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>Available at All Branches</span>
+                        </div>
+                      )}
 
                       <p className="text-xs text-[#6B6175] leading-relaxed mb-4">
                         {service.description}
@@ -202,7 +303,7 @@ export const ServicesPage: React.FC = () => {
 
                       <button
                         onClick={() => openBookingModal(service)}
-                        className="px-4 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded transition-colors cursor-pointer"
+                        className="px-4 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded-lg transition-colors cursor-pointer shadow-xs"
                       >
                         Book Now
                       </button>

@@ -4,7 +4,7 @@ import { useSalon } from '../context/SalonContext';
 import { getImageUrl, handleImageError } from '../lib/imageHelper';
 
 export const PackagesPage: React.FC = () => {
-  const { packages, branches, openBookingModal } = useSalon();
+  const { packages, branches, openBookingModal, navigate } = useSalon();
 
   return (
     <div className="bg-[#FAFAFB] min-h-screen">
@@ -148,8 +148,8 @@ export const PackagesPage: React.FC = () => {
             </p>
           </div>
           <button
-            onClick={() => openBookingModal()}
-            className="px-6 py-3 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-xs uppercase tracking-wider font-semibold rounded shrink-0 cursor-pointer shadow"
+            onClick={() => navigate('/contact?topic=bridal')}
+            className="px-6 py-3 bg-[#E5A93C] hover:bg-[#F0B54B] text-[#1C1221] text-xs uppercase tracking-wider font-semibold rounded shrink-0 cursor-pointer shadow transition-colors"
           >
             Inquire for Private Events
           </button>

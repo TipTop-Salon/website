@@ -1,4 +1,4 @@
-import { ServiceItem, BeautyPackage, GalleryItem, SalonSettings, Branch, CategoryItem, AppUser } from '../types/salon';
+import { ServiceItem, BeautyPackage, GalleryItem, SalonSettings, Branch, CategoryItem, AppUser, ContactMessage } from '../types/salon';
 import { CDN_IMAGES } from '../lib/imageHelper';
 
 export const INITIAL_BRANCHES: Branch[] = [
@@ -202,6 +202,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
     ],
     isFeatured: true,
     popular: true,
+    branchIds: ['silang-premier', 'tagaytay-serin'],
   },
   {
     id: 'russian-apres-gel-x',
@@ -218,6 +219,7 @@ export const INITIAL_SERVICES: ServiceItem[] = [
       'Reinforced apex for slender architectural strength',
       'Includes choice of French micro-line or minimalist chrome'
     ],
+    branchIds: ['silang-premier', 'dasmarinas-central'],
     isFeatured: false,
     popular: false,
   },
@@ -378,3 +380,32 @@ export const INITIAL_SETTINGS: SalonSettings = {
     'Complimentary consultation with every treatment and tailored aftercare regimen'
   ]
 };
+
+export const INITIAL_MESSAGES: ContactMessage[] = [
+  {
+    id: 'msg-1',
+    name: 'Clarisse Monteverde',
+    email: 'clarisse.m@gmail.com',
+    phone: '+63 917 234 5678',
+    inquiryType: 'Bridal & Group Booking',
+    message: 'Hello! Inquiring for bridal hair and bespoke nail architecture packages for 5 bridesmaids this coming December at Premier Mall Silang. Do you offer private atelier buyouts?',
+    branchId: 'silang-premier',
+    branchName: 'Premier Mall Silang (Flagship)',
+    status: 'new',
+    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+  },
+  {
+    id: 'msg-2',
+    name: 'Gianna Reyes',
+    email: 'gianna.reyes@outlook.com',
+    phone: '+63 928 456 7890',
+    inquiryType: 'Appointment Inquiry',
+    message: 'Hi team, would love to book a Japanese high-carbon shears haircut and dimensional balayage for next Saturday afternoon. Which senior colorist would you recommend?',
+    branchId: 'tagaytay-serin',
+    branchName: 'Ayala Malls Serin Tagaytay',
+    status: 'read',
+    createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+    replyNotes: 'Advised client on weekend slots with Master Stylist.'
+  }
+];
+

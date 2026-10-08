@@ -28,7 +28,10 @@ export const BookingModal: React.FC = () => {
   } = useSalon();
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
-    return activeBranchId || (branches[0]?.id ?? DEFAULT_FALLBACK_BRANCH.id);
+    if (activeBranchId && activeBranchId !== 'all') {
+      return activeBranchId;
+    }
+    return branches[0]?.id ?? DEFAULT_FALLBACK_BRANCH.id;
   });
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
@@ -44,7 +47,6 @@ export const BookingModal: React.FC = () => {
     }
   });
   const [appointmentTime, setAppointmentTime] = useState('11:00 AM');
-  const [stylist, setStylist] = useState('Master Stylist Claire');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<string | null>(null);
@@ -52,9 +54,9 @@ export const BookingModal: React.FC = () => {
 
   // Sync active branch if modal opens
   useEffect(() => {
-    if (activeBranchId) {
+    if (activeBranchId && activeBranchId !== 'all') {
       setSelectedBranchId(activeBranchId);
-    } else if (branches.length > 0) {
+    } else if (branches.length > 0 && (!selectedBranchId || selectedBranchId === 'all')) {
       setSelectedBranchId(branches[0].id);
     }
   }, [activeBranchId, isBookingModalOpen, branches]);
@@ -131,13 +133,6 @@ export const BookingModal: React.FC = () => {
     '07:30 PM',
   ];
 
-  const stylists = [
-    'Master Stylist Claire (Hair & Shears Lead)',
-    'Artisan Nailist Vivienne (Gel Architecture & Art)',
-    'Spa Specialist Maya (Hydrotherapy & Pedicures)',
-    'First Available Senior Specialist',
-  ];
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
@@ -160,7 +155,7 @@ export const BookingModal: React.FC = () => {
         customerPhone: customerPhone.trim(),
         appointmentDate,
         appointmentTime,
-        stylist,
+        stylist: 'Assigned Atelier Specialist',
         notes: notes.trim(),
         totalPrice: selectedPrice,
       });
@@ -242,12 +237,6 @@ export const BookingModal: React.FC = () => {
                 <div className="flex justify-between text-[#6B6175]">
                   <span>Duration</span>
                   <span className="text-[#1C1221] font-medium">{selectedDuration} Minutes</span>
-                </div>
-                <div className="flex justify-between text-[#6B6175]">
-                  <span>Specialist</span>
-                  <span className="text-[#1C1221] font-medium text-right">
-                    {stylist ? stylist.split('(')[0].trim() : 'Senior Specialist'}
-                  </span>
                 </div>
                 <div className="flex justify-between text-sm font-semibold text-[#1C1221] pt-2.5 border-t border-[#ECEBF0]">
                   <span>Estimated Total Due</span>
@@ -363,25 +352,6 @@ export const BookingModal: React.FC = () => {
                     ))}
                   </select>
                 </div>
-              </div>
-
-              {/* Stylist Preference */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-[#7B2D97]" />
-                  Specialist / Stylist Preference
-                </label>
-                <select
-                  value={stylist}
-                  onChange={(e) => setStylist(e.target.value)}
-                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3.5 py-2 text-xs text-[#1C1221] focus:outline-none focus:ring-2 focus:ring-[#7B2D97]"
-                >
-                  {stylists.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               {/* Client Info Grid */}

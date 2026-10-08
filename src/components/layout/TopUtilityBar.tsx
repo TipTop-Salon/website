@@ -19,6 +19,9 @@ export const TopUtilityBar: React.FC = () => {
               className="bg-transparent text-white font-medium focus:outline-none cursor-pointer pr-1 max-w-[160px] sm:max-w-xs truncate"
               aria-label="Select active salon branch"
             >
+              <option value="all" className="bg-[#1C1221] text-white">
+                All Branches ({branches.length} Locations)
+              </option>
               {branches.map((b) => (
                 <option key={b.id} value={b.id} className="bg-[#1C1221] text-white">
                   {b.name}
@@ -28,7 +31,9 @@ export const TopUtilityBar: React.FC = () => {
           </div>
           <span className="text-[#3D294B] hidden md:inline">|</span>
           <span className="hidden md:inline truncate max-w-xs text-[11px] text-[#A395AD]">
-            {activeBranch?.mallName || activeBranch?.address}
+            {activeBranchId === 'all'
+              ? `${branches.length} Cavite Locations`
+              : (activeBranch?.mallName || activeBranch?.address)}
           </span>
         </div>
 

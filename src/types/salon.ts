@@ -92,6 +92,20 @@ export interface GalleryItem {
   caption: string;
 }
 
+export interface ContactMessage {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  inquiryType: string;
+  message: string;
+  branchId?: string;
+  branchName?: string;
+  status: 'new' | 'read' | 'replied' | 'archived';
+  createdAt: string;
+  replyNotes?: string;
+}
+
 export interface SalonSettings {
   salonName: string;
   tagline: string;

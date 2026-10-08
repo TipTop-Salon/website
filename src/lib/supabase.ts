@@ -172,6 +172,21 @@ create table if not exists public.salon_settings (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- 9. Contact Inquiries & Concierge Messages Table
+create table if not exists public.contact_messages (
+  id text primary key,
+  name text not null,
+  email text not null,
+  phone text,
+  inquiry_type text not null,
+  message text not null,
+  branch_id text references public.branches(id) on delete set null,
+  branch_name text,
+  status text default 'new' check (status in ('new', 'read', 'replied', 'archived')),
+  reply_notes text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- Enable Row Level Security (RLS)
 alter table public.branches enable row level security;
 alter table public.service_categories enable row level security;
@@ -181,6 +196,7 @@ alter table public.packages enable row level security;
 alter table public.bookings enable row level security;
 alter table public.gallery enable row level security;
 alter table public.salon_settings enable row level security;
+alter table public.contact_messages enable row level security;
 
 -- Drop existing policies if re-running migration
 drop policy if exists "Public branches are viewable by everyone" on public.branches;
@@ -190,6 +206,7 @@ drop policy if exists "Public packages are viewable by everyone" on public.packa
 drop policy if exists "Public bookings viewable" on public.bookings;
 drop policy if exists "Public gallery is viewable by everyone" on public.gallery;
 drop policy if exists "Public settings are viewable by everyone" on public.salon_settings;
+drop policy if exists "Public contact messages insertable" on public.contact_messages;
 drop policy if exists "Public can insert bookings" on public.bookings;
 drop policy if exists "Admins can manage branches" on public.branches;
 drop policy if exists "Admins can manage categories" on public.service_categories;
@@ -199,6 +216,7 @@ drop policy if exists "Admins can manage packages" on public.packages;
 drop policy if exists "Admins can manage bookings" on public.bookings;
 drop policy if exists "Admins can manage gallery" on public.gallery;
 drop policy if exists "Admins can manage salon settings" on public.salon_settings;
+drop policy if exists "Admins can manage contact messages" on public.contact_messages;
 
 -- Public Read Access Policies
 create policy "Public branches are viewable by everyone" on public.branches for select using (true);
@@ -209,8 +227,9 @@ create policy "Public bookings viewable" on public.bookings for select using (tr
 create policy "Public gallery is viewable by everyone" on public.gallery for select using (true);
 create policy "Public settings are viewable by everyone" on public.salon_settings for select using (true);
 
--- Public Booking Creation Policy
+-- Public Creation Policies
 create policy "Public can insert bookings" on public.bookings for insert with check (true);
+create policy "Public contact messages insertable" on public.contact_messages for insert with check (true);
 
 -- Staff & Super Admin Full Access Policies
 create policy "Admins can manage branches" on public.branches for all using (true);
@@ -221,6 +240,7 @@ create policy "Admins can manage packages" on public.packages for all using (tru
 create policy "Admins can manage bookings" on public.bookings for all using (true);
 create policy "Admins can manage gallery" on public.gallery for all using (true);
 create policy "Admins can manage salon settings" on public.salon_settings for all using (true);
+create policy "Admins can manage contact messages" on public.contact_messages for all using (true);
 
 -- 9. Supabase Auth Users Auto-Sync Trigger
 -- Automatically syncs users created in Supabase Authentication Dashboard into public.app_users table

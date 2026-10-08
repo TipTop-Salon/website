@@ -34,14 +34,17 @@ import {
   Gift,
   FileText,
   CheckCircle2,
-  Upload
+  Upload,
+  Search,
+  MessageSquare,
+  Inbox
 } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
-import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking } from '../../types/salon';
+import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking, ContactMessage } from '../../types/salon';
 import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, uploadToSupabaseStorage, getSupabaseClient } from '../../lib/supabase';
 import { getImageUrl, handleImageError, CDN_IMAGES } from '../../lib/imageHelper';
 
-type AdminTab = 'bookings' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
+type AdminTab = 'bookings' | 'messages' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
 
 export const AdminPage: React.FC = () => {
   const {
@@ -90,7 +93,10 @@ export const AdminPage: React.FC = () => {
     syncWithSupabase,
     fullCloudSync,
     seedSupabaseFromCatalog,
-    navigate
+    navigate,
+    messages,
+    updateMessageStatus,
+    deleteContactMessage,
   } = useSalon();
 
   // Tab navigation (Default to Appointments for high daily operational efficiency)
@@ -99,6 +105,34 @@ export const AdminPage: React.FC = () => {
 
   // Bookings filter by branch
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
+
+  // Contact Inquiries & Messages State
+  const [selectedMessageBranchFilter, setSelectedMessageBranchFilter] = useState<string>('all');
+  const [messageStatusFilter, setMessageStatusFilter] = useState<'all' | 'new' | 'read' | 'replied' | 'archived'>('all');
+  const [messageSearchQuery, setMessageSearchQuery] = useState<string>('');
+  const [activeMessageDetail, setActiveMessageDetail] = useState<ContactMessage | null>(null);
+  const [editingReplyNotes, setEditingReplyNotes] = useState<string>('');
+  const [messageActionSuccess, setMessageActionSuccess] = useState<string | null>(null);
+
+  const unreadMessagesCount = useMemo(() => {
+    return messages.filter(m => m.status === 'new').length;
+  }, [messages]);
+
+  const filteredMessages = useMemo(() => {
+    return messages.filter((m) => {
+      const matchBranch = selectedMessageBranchFilter === 'all' || m.branchId === selectedMessageBranchFilter;
+      const matchStatus = messageStatusFilter === 'all' || m.status === messageStatusFilter;
+      const q = messageSearchQuery.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        m.name.toLowerCase().includes(q) ||
+        m.email.toLowerCase().includes(q) ||
+        (m.phone && m.phone.toLowerCase().includes(q)) ||
+        m.inquiryType.toLowerCase().includes(q) ||
+        m.message.toLowerCase().includes(q);
+      return matchBranch && matchStatus && matchSearch;
+    });
+  }, [messages, selectedMessageBranchFilter, messageStatusFilter, messageSearchQuery]);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState('admin@tiptopshears.com');
@@ -599,7 +633,7 @@ export const AdminPage: React.FC = () => {
       customerEmail: '',
       appointmentDate: today,
       appointmentTime: '11:00 AM',
-      stylist: 'Master Stylist Claire (Hair & Shears Lead)',
+      stylist: 'Assigned Stylist',
       status: 'confirmed',
       notes: '',
       customPrice: ''
@@ -651,7 +685,7 @@ export const AdminPage: React.FC = () => {
         customerPhone: customerBookingForm.customerPhone.trim(),
         appointmentDate: customerBookingForm.appointmentDate,
         appointmentTime: customerBookingForm.appointmentTime,
-        stylist: customerBookingForm.stylist,
+        stylist: 'Assigned Stylist',
         notes: `${sourcePrefix}${customerBookingForm.notes.trim()}`,
         totalPrice: finalPrice,
         status: customerBookingForm.status
@@ -757,7 +791,7 @@ export const AdminPage: React.FC = () => {
 
   const handleFullCloudSync = async () => {
     setIsSeedingCloud(true);
-    setSupabaseMessage('Executing Full Cloud Sync: Pushing local/offline changes & refetching all 8 tables...');
+    setSupabaseMessage('Executing Full Cloud Sync: Pushing local/offline changes & refetching all 9 tables...');
     const res = await fullCloudSync();
     setSupabaseMessage(res.message);
     setIsSeedingCloud(false);
@@ -958,25 +992,54 @@ export const AdminPage: React.FC = () => {
               <div className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] px-3 mb-2">
                 Operations
               </div>
-              <button
-                onClick={() => {
-                  setActiveTab('bookings');
-                  setMobileSidebarOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-all cursor-pointer ${
-                  activeTab === 'bookings'
-                    ? 'bg-[#7B2D97] text-white font-semibold shadow-sm'
-                    : 'text-[#DDD7E3] hover:bg-[#211627] hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Calendar className="w-4 h-4 text-[#E5A93C]" />
-                  <span>Appointments</span>
-                </div>
-                <span className="bg-[#140D18]/60 text-[10px] font-mono px-2 py-0.5 rounded text-[#E5A93C]">
-                  {bookings.length}
-                </span>
-              </button>
+              <div className="space-y-1">
+                <button
+                  onClick={() => {
+                    setActiveTab('bookings');
+                    setMobileSidebarOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-all cursor-pointer ${
+                    activeTab === 'bookings'
+                      ? 'bg-[#7B2D97] text-white font-semibold shadow-sm'
+                      : 'text-[#DDD7E3] hover:bg-[#211627] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Calendar className="w-4 h-4 text-[#E5A93C]" />
+                    <span>Appointments</span>
+                  </div>
+                  <span className="bg-[#140D18]/60 text-[10px] font-mono px-2 py-0.5 rounded text-[#E5A93C]">
+                    {bookings.length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('messages');
+                    setMobileSidebarOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-all cursor-pointer ${
+                    activeTab === 'messages'
+                      ? 'bg-[#7B2D97] text-white font-semibold shadow-sm'
+                      : 'text-[#DDD7E3] hover:bg-[#211627] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <MessageSquare className="w-4 h-4 text-[#E5A93C]" />
+                    <span>Contact Inquiries</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {unreadMessagesCount > 0 && (
+                      <span className="bg-[#E5A93C] text-[#1C1221] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                        {unreadMessagesCount} new
+                      </span>
+                    )}
+                    <span className="bg-[#140D18]/60 text-[10px] font-mono px-1.5 py-0.5 rounded text-[#DDD7E3]">
+                      {messages.length}
+                    </span>
+                  </div>
+                </button>
+              </div>
             </div>
 
             {/* GROUP 2: CATALOG & MENU */}
@@ -1183,6 +1246,7 @@ export const AdminPage: React.FC = () => {
             </div>
             <h1 className="font-serif text-2xl font-normal text-[#1C1221] mt-0.5">
               {activeTab === 'bookings' && 'Guest Appointments & Reservations'}
+              {activeTab === 'messages' && 'Guest Inquiries & Contact Notes'}
               {activeTab === 'services' && 'Salon Services Menu'}
               {activeTab === 'packages' && 'Curated Promotional Packages'}
               {activeTab === 'categories' && 'Dynamic Categories Management'}
@@ -1402,6 +1466,271 @@ export const AdminPage: React.FC = () => {
                           </td>
                         </tr>
                       ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB: CONTACT INQUIRIES & MESSAGES */}
+          {/* ========================================================= */}
+          {activeTab === 'messages' && (
+            <div className="space-y-4">
+              {/* Success Notification Banner */}
+              {messageActionSuccess && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-sm animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span className="font-medium">{messageActionSuccess}</span>
+                  </div>
+                  <button
+                    onClick={() => setMessageActionSuccess(null)}
+                    className="text-emerald-700 hover:text-emerald-900 p-1 rounded hover:bg-emerald-100 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* Filters & Search Bar */}
+              <div className="bg-white p-4 rounded-xl border border-[#ECEBF0] shadow-sm space-y-3">
+                <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                  {/* Status Filter Tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 text-xs">
+                    {(['all', 'new', 'read', 'replied', 'archived'] as const).map((status) => {
+                      const count =
+                        status === 'all'
+                          ? messages.length
+                          : messages.filter((m) => m.status === status).length;
+                      const isActive = messageStatusFilter === status;
+                      return (
+                        <button
+                          key={status}
+                          onClick={() => setMessageStatusFilter(status)}
+                          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                            isActive
+                              ? 'bg-[#7B2D97] text-white shadow-xs'
+                              : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                          }`}
+                        >
+                          <span className="capitalize">{status}</span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                              isActive
+                                ? 'bg-white/20 text-white'
+                                : status === 'new' && count > 0
+                                ? 'bg-amber-100 text-amber-800 font-bold'
+                                : 'bg-[#ECEBF0] text-[#6B6175]'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Branch & Search Controls */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Branch Filter */}
+                    <div className="flex items-center gap-1.5 bg-[#FAFAFB] px-2.5 py-1.5 rounded-lg border border-[#ECEBF0] text-xs">
+                      <Filter className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      <select
+                        value={selectedMessageBranchFilter}
+                        onChange={(e) => setSelectedMessageBranchFilter(e.target.value)}
+                        className="bg-transparent font-medium text-[#1C1221] focus:outline-none cursor-pointer text-xs"
+                      >
+                        <option value="all">All Locations</option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Search Input */}
+                    <div className="relative flex-1 sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-[#8A7E93] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search guest, email, topic..."
+                        value={messageSearchQuery}
+                        onChange={(e) => setMessageSearchQuery(e.target.value)}
+                        className="w-full bg-[#FAFAFB] border border-[#ECEBF0] rounded-lg pl-8 pr-3 py-1.5 text-xs text-[#1C1221] focus:outline-none focus:ring-1 focus:ring-[#7B2D97]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Messages Table */}
+              <div className="bg-white rounded-xl border border-[#ECEBF0] overflow-x-auto shadow-sm">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#FAFAFB] border-b border-[#ECEBF0] text-[#6B6175] uppercase tracking-wider font-semibold">
+                    <tr>
+                      <th className="p-4">Status</th>
+                      <th className="p-4">Received</th>
+                      <th className="p-4">Guest Contact</th>
+                      <th className="p-4">Inquiry Category</th>
+                      <th className="p-4">Location Scope</th>
+                      <th className="p-4">Message Snippet</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#ECEBF0]">
+                    {filteredMessages.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-10 text-center text-xs text-[#6B6175] space-y-2">
+                          <Inbox className="w-8 h-8 text-[#A597B0] mx-auto stroke-1" />
+                          <p className="font-medium text-[#1C1221]">No inquiries found</p>
+                          <p className="text-[11px] text-[#8A7E93]">
+                            {messages.length === 0
+                              ? 'No contact messages have been received yet. Test by submitting a note on the /contact page.'
+                              : 'No messages match your selected status or filter criteria.'}
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMessages.map((msg) => {
+                        const dateFormatted = new Date(msg.createdAt).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        });
+
+                        return (
+                          <tr
+                            key={msg.id}
+                            className={`hover:bg-[#FAF9FB] transition-colors ${
+                              msg.status === 'new' ? 'bg-[#FCF9FD]/60' : ''
+                            }`}
+                          >
+                            {/* Status Badge */}
+                            <td className="p-4">
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                                  msg.status === 'new'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : msg.status === 'replied'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : msg.status === 'read'
+                                    ? 'bg-slate-100 text-slate-700 border border-slate-300'
+                                    : 'bg-zinc-100 text-zinc-600 border border-zinc-200'
+                                }`}
+                              >
+                                {msg.status === 'new' && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                )}
+                                {msg.status}
+                              </span>
+                            </td>
+
+                            {/* Received Timestamp */}
+                            <td className="p-4 whitespace-nowrap text-[#6B6175] font-mono text-[11px]">
+                              {dateFormatted}
+                            </td>
+
+                            {/* Guest Details */}
+                            <td className="p-4">
+                              <div className="font-semibold text-[#1C1221]">{msg.name}</div>
+                              <div className="flex items-center gap-3 mt-0.5 text-[11px] text-[#6B6175]">
+                                <a
+                                  href={`mailto:${msg.email}`}
+                                  className="text-[#7B2D97] hover:underline flex items-center gap-1"
+                                  title={`Email ${msg.name}`}
+                                >
+                                  <Mail className="w-3 h-3" />
+                                  <span>{msg.email}</span>
+                                </a>
+                                {msg.phone && (
+                                  <a
+                                    href={`tel:${msg.phone}`}
+                                    className="text-[#6B6175] hover:text-[#1C1221] flex items-center gap-1"
+                                    title={`Call ${msg.phone}`}
+                                  >
+                                    <Phone className="w-3 h-3 text-[#A597B0]" />
+                                    <span>{msg.phone}</span>
+                                  </a>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Inquiry Category */}
+                            <td className="p-4">
+                              <span className="inline-block px-2 py-0.5 bg-[#F2EFF6] text-[#7B2D97] font-medium rounded text-[11px]">
+                                {msg.inquiryType}
+                              </span>
+                            </td>
+
+                            {/* Location */}
+                            <td className="p-4 text-[#6B6175]">
+                              {msg.branchName || 'General Concierge'}
+                            </td>
+
+                            {/* Snippet */}
+                            <td className="p-4 max-w-xs">
+                              <p className="line-clamp-2 text-[#4A3D54] italic">
+                                "{msg.message}"
+                              </p>
+                              {msg.replyNotes && (
+                                <div className="mt-1 text-[10px] text-emerald-700 font-medium">
+                                  Note: {msg.replyNotes}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="p-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    setActiveMessageDetail(msg);
+                                    setEditingReplyNotes(msg.replyNotes || '');
+                                    if (msg.status === 'new') {
+                                      updateMessageStatus(msg.id, 'read');
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-[11px] font-medium rounded transition-colors cursor-pointer"
+                                >
+                                  View & Reply
+                                </button>
+
+                                <select
+                                  value={msg.status}
+                                  onChange={(e) => {
+                                    updateMessageStatus(msg.id, e.target.value as any);
+                                    setMessageActionSuccess(`Status updated to ${e.target.value}`);
+                                  }}
+                                  className="bg-[#FAFAFB] border border-[#D9D6E2] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#7B2D97] cursor-pointer"
+                                >
+                                  <option value="new">Mark New</option>
+                                  <option value="read">Mark Read</option>
+                                  <option value="replied">Mark Replied</option>
+                                  <option value="archived">Archive</option>
+                                </select>
+
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Delete inquiry from ${msg.name}?`)) {
+                                      deleteContactMessage(msg.id);
+                                      setMessageActionSuccess('Inquiry deleted successfully.');
+                                    }
+                                  }}
+                                  className="p-1 text-[#8A7E93] hover:text-red-600 rounded hover:bg-red-50 cursor-pointer transition-colors"
+                                  title="Delete message"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -2078,7 +2407,7 @@ export const AdminPage: React.FC = () => {
 
                 {/* Cloud Live Data Counters (When Connected) */}
                 {supabaseConnected && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-4 bg-[#FAF8FC] border border-[#E8E2EE] rounded-xl">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 p-4 bg-[#FAF8FC] border border-[#E8E2EE] rounded-xl">
                     <div className="text-center p-2">
                       <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Branches</div>
                       <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{branches.length}</div>
@@ -2102,6 +2431,10 @@ export const AdminPage: React.FC = () => {
                     <div className="text-center p-2">
                       <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Gallery</div>
                       <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{gallery.length}</div>
+                    </div>
+                    <div className="text-center p-2">
+                      <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Inquiries</div>
+                      <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{messages.length}</div>
                     </div>
                   </div>
                 )}
@@ -2141,10 +2474,10 @@ export const AdminPage: React.FC = () => {
                       onClick={handleFullCloudSync}
                       disabled={isSeedingCloud}
                       className="px-5 py-2.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors disabled:opacity-50 flex items-center gap-2"
-                      title="Pushes all offline changes across all 8 tables to Supabase, then refetches latest fresh cloud state"
+                      title="Pushes all offline changes across all 9 tables to Supabase, then refetches latest fresh cloud state"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />
-                      <span>{isSeedingCloud ? 'Synchronizing All 8 Tables...' : '🔄 Full Cloud Sync (All 8 Tables)'}</span>
+                      <span>{isSeedingCloud ? 'Synchronizing All 9 Tables...' : '🔄 Full Cloud Sync (All 9 Tables)'}</span>
                     </button>
                   )}
                   <button
@@ -2189,10 +2522,10 @@ export const AdminPage: React.FC = () => {
                   <div className="flex items-center justify-between flex-wrap gap-4">
                     <div className="space-y-1">
                       <h4 className="font-serif text-lg font-medium text-[#1C1221]">
-                        SQL Migration & Schema Scripts
+                        SQL Schema Setup & Seed Scripts
                       </h4>
                       <p className="text-[11px] text-[#6B6175]">
-                        Choose clean schema without seed data or view the optional demo seeds script.
+                        Choose between pure clean schema (zero initial records) or optional demo seed data.
                       </p>
                     </div>
 
@@ -2207,7 +2540,7 @@ export const AdminPage: React.FC = () => {
                               : 'text-[#6B6175] hover:text-[#1C1221]'
                           }`}
                         >
-                          1. Clean Schema (Zero Seeds)
+                          1. Clean Schema (All 9 Tables)
                         </button>
                         <button
                           type="button"
@@ -3873,8 +4206,8 @@ export const AdminPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Date, Time Slot & Stylist */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Date & Time Slot */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
                       <Calendar className="w-3.5 h-3.5 text-[#7B2D97]" />
@@ -3914,23 +4247,6 @@ export const AdminPage: React.FC = () => {
                           {t}
                         </option>
                       ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-[#7B2D97]" />
-                      Specialist
-                    </label>
-                    <select
-                      value={customerBookingForm.stylist}
-                      onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, stylist: e.target.value })}
-                      className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
-                    >
-                      <option value="Master Stylist Claire (Hair & Shears Lead)">Master Stylist Claire</option>
-                      <option value="Artisan Nailist Vivienne (Gel Architecture & Art)">Artisan Nailist Vivienne</option>
-                      <option value="Spa Specialist Maya (Hydrotherapy & Pedicures)">Spa Specialist Maya</option>
-                      <option value="First Available Senior Specialist">First Available Specialist</option>
                     </select>
                   </div>
                 </div>
@@ -4012,6 +4328,195 @@ export const AdminPage: React.FC = () => {
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MESSAGE DETAIL & CONCIERGE REPLY MODAL */}
+      {/* ========================================================= */}
+      {activeMessageDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-xl w-full overflow-hidden shadow-2xl border border-[#ECEBF0] animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="bg-[#1C1221] text-white px-6 py-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-[#7B2D97]/40 flex items-center justify-center text-[#E5A93C]">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-normal text-white">
+                    Inquiry from {activeMessageDetail.name}
+                  </h3>
+                  <p className="text-xs text-[#DDD7E3]">
+                    {activeMessageDetail.inquiryType} &bull;{' '}
+                    {new Date(activeMessageDetail.createdAt).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveMessageDetail(null)}
+                className="text-[#DDD7E3] hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto text-xs">
+              {/* Guest Information Card */}
+              <div className="bg-[#FAFAFB] p-4 rounded-xl border border-[#ECEBF0] space-y-2.5">
+                <div className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87]">
+                  Guest Contact Details
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-[#8A7E93] block text-[11px]">Full Name</span>
+                    <span className="font-semibold text-[#1C1221] text-sm">{activeMessageDetail.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-[#8A7E93] block text-[11px]">Branch Location</span>
+                    <span className="font-semibold text-[#7B2D97]">
+                      {activeMessageDetail.branchName || 'General Concierge (All Branches)'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#8A7E93] block text-[11px]">Email Address</span>
+                    <a
+                      href={`mailto:${activeMessageDetail.email}?subject=Tiptop Shears & Nails Concierge Inquiry: ${encodeURIComponent(activeMessageDetail.inquiryType)}`}
+                      className="text-[#7B2D97] hover:underline font-medium flex items-center gap-1.5 mt-0.5"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>{activeMessageDetail.email}</span>
+                    </a>
+                  </div>
+                  <div>
+                    <span className="text-[#8A7E93] block text-[11px]">Phone Number</span>
+                    {activeMessageDetail.phone ? (
+                      <a
+                        href={`tel:${activeMessageDetail.phone}`}
+                        className="text-[#1C1221] hover:text-[#7B2D97] font-medium flex items-center gap-1.5 mt-0.5"
+                      >
+                        <Phone className="w-3.5 h-3.5 text-[#A597B0]" />
+                        <span>{activeMessageDetail.phone}</span>
+                      </a>
+                    ) : (
+                      <span className="text-[#A597B0] italic">Not provided</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Message Body */}
+              <div>
+                <label className="block text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] mb-2">
+                  Client Message
+                </label>
+                <div className="p-4 bg-purple-50/40 rounded-xl border border-purple-100 text-[#2C1D36] text-xs leading-relaxed whitespace-pre-wrap font-sans">
+                  "{activeMessageDetail.message}"
+                </div>
+              </div>
+
+              {/* Status & Quick Contact Actions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] mb-1.5">
+                    Update Message Status
+                  </label>
+                  <select
+                    value={activeMessageDetail.status}
+                    onChange={(e) => {
+                      const newStatus = e.target.value as ContactMessage['status'];
+                      updateMessageStatus(activeMessageDetail.id, newStatus, editingReplyNotes);
+                      setActiveMessageDetail({ ...activeMessageDetail, status: newStatus });
+                      setMessageActionSuccess(`Inquiry marked as ${newStatus}.`);
+                    }}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded-lg px-3 py-2 text-xs text-[#1C1221] font-medium focus:outline-none focus:ring-1 focus:ring-[#7B2D97]"
+                  >
+                    <option value="new">New (Unread / Needs Action)</option>
+                    <option value="read">Read (Reviewed by Staff)</option>
+                    <option value="replied">Replied (Contacted Customer)</option>
+                    <option value="archived">Archived (Closed)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`mailto:${activeMessageDetail.email}?subject=Regarding your Tiptop Salon inquiry: ${encodeURIComponent(activeMessageDetail.inquiryType)}`}
+                    className="flex-1 py-2 px-3 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] rounded-lg text-xs font-semibold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Email Guest</span>
+                  </a>
+                  {activeMessageDetail.phone && (
+                    <a
+                      href={`tel:${activeMessageDetail.phone}`}
+                      className="py-2 px-3 bg-[#FAFAFB] hover:bg-[#F2EFF6] border border-[#ECEBF0] text-[#1C1221] rounded-lg text-xs font-semibold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Phone className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      <span>Call</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Concierge Staff Notes */}
+              <div>
+                <label className="block text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] mb-1.5 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-[#7B2D97]" />
+                  Internal Concierge & Staff Notes
+                </label>
+                <div className="flex gap-2">
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Sent email offer for bridal package; customer prefers Saturday appointment."
+                    value={editingReplyNotes}
+                    onChange={(e) => setEditingReplyNotes(e.target.value)}
+                    className="flex-1 bg-[#FAFAFB] border border-[#D9D6E2] rounded-lg p-2.5 text-xs text-[#1C1221] focus:outline-none focus:ring-1 focus:ring-[#7B2D97]"
+                  />
+                  <button
+                    onClick={() => {
+                      updateMessageStatus(activeMessageDetail.id, activeMessageDetail.status, editingReplyNotes);
+                      setActiveMessageDetail({ ...activeMessageDetail, replyNotes: editingReplyNotes });
+                      setMessageActionSuccess('Staff notes saved successfully.');
+                    }}
+                    className="px-3 py-2 bg-[#211627] hover:bg-[#341F3E] text-white rounded-lg text-xs font-medium cursor-pointer transition-colors self-end"
+                  >
+                    Save Note
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-[#ECEBF0] bg-[#FAFAFB]">
+              <button
+                onClick={() => {
+                  if (window.confirm(`Delete inquiry from ${activeMessageDetail.name}?`)) {
+                    deleteContactMessage(activeMessageDetail.id);
+                    setActiveMessageDetail(null);
+                    setMessageActionSuccess('Inquiry deleted successfully.');
+                  }
+                }}
+                className="text-red-600 hover:text-red-700 text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Inquiry</span>
+              </button>
+
+              <button
+                onClick={() => setActiveMessageDetail(null)}
+                className="px-4 py-2 bg-[#ECEBF0] hover:bg-[#DDD7E3] text-[#1C1221] rounded-lg text-xs font-medium cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

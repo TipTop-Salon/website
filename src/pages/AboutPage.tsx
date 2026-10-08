@@ -1,31 +1,10 @@
 import React from 'react';
-import { Scissors, Sparkles, Award, Shield, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Sparkles, Shield, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useSalon } from '../context/SalonContext';
 import { getImageUrl, handleImageError, CDN_IMAGES } from '../lib/imageHelper';
 
 export const AboutPage: React.FC = () => {
   const { settings, navigate, openBookingModal } = useSalon();
-
-  const artisans = [
-    {
-      name: 'Claire Moreau',
-      role: 'Founder & Master Shears Artisan',
-      bio: 'Trained under world-renowned Tokyo and Paris shear sculptors, Claire specializes in dry anatomical haircutting that requires virtually zero styling effort at home.',
-      credentials: '14+ Years International Editorial & Salon Experience'
-    },
-    {
-      name: 'Vivienne Chen',
-      role: 'Lead Nail Architect',
-      bio: 'Pioneering Russian e-file cuticle techniques and delicate Japanese gel nail art, Vivienne crafts durable, immaculate overlays that maintain natural nail vitality.',
-      credentials: 'Certified Russian E-file & Apres Gel-X Master'
-    },
-    {
-      name: 'Maya Alston',
-      role: 'Senior Spa & Trichology Therapist',
-      bio: 'Passionate about scalp wellness and holistic hydrotherapy, Maya integrates herbal trichology to reverse environmental fatigue and hair thinning.',
-      credentials: 'Licensed Trichology & Organic Wellness Practitioner'
-    }
-  ];
 
   const pillars = [
     {
@@ -133,47 +112,6 @@ export const AboutPage: React.FC = () => {
               </div>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* Artisans & Stylists Team */}
-      <section className="max-w-7xl mx-auto py-20 px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16 space-y-3">
-          <span className="text-[#7B2D97] text-xs uppercase tracking-widest font-semibold block">
-            The Master Artists
-          </span>
-          <h2 className="font-serif text-3xl sm:text-4xl text-[#1C1221] font-light">
-            Crafted by Seasoned Specialists
-          </h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {artisans.map((artisan, idx) => (
-            <div
-              key={idx}
-              className="bg-white rounded-lg border border-[#ECEBF0] p-6 sm:p-8 flex flex-col justify-between hover:shadow-lg transition-all"
-            >
-              <div>
-                <div className="w-12 h-12 rounded-lg bg-[#7B2D97]/10 text-[#7B2D97] flex items-center justify-center mb-6">
-                  <Scissors className="w-6 h-6" />
-                </div>
-                <h3 className="font-serif text-2xl font-medium text-[#1C1221] mb-1">
-                  {artisan.name}
-                </h3>
-                <span className="text-xs font-semibold uppercase tracking-wider text-[#7B2D97] block mb-4">
-                  {artisan.role}
-                </span>
-                <p className="text-xs text-[#6B6175] leading-relaxed mb-6">
-                  {artisan.bio}
-                </p>
-              </div>
-
-              <div className="pt-4 border-t border-[#ECEBF0] text-[11px] text-[#82788D] flex items-center gap-1.5 font-medium">
-                <Award className="w-3.5 h-3.5 text-[#E5A93C] shrink-0" />
-                <span>{artisan.credentials}</span>
-              </div>
-            </div>
-          ))}
         </div>
       </section>
 
