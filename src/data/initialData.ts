@@ -1,4 +1,4 @@
-import { ServiceItem, BeautyPackage, GalleryItem, SalonSettings, Branch, CategoryItem, AppUser, ContactMessage } from '../types/salon';
+import { ServiceItem, BeautyPackage, GalleryItem, SalonSettings, Branch, CategoryItem, AppUser, ContactMessage, LoyaltyRewardItem, LoyaltyLog } from '../types/salon';
 import { CDN_IMAGES } from '../lib/imageHelper';
 
 export const INITIAL_BRANCHES: Branch[] = [
@@ -94,6 +94,21 @@ export const INITIAL_USERS: AppUser[] = [
     password: 'tiptop2026!',
     createdAt: '2026-01-01T00:00:00Z',
     isActive: true,
+    loyaltyPoints: 1250,
+    loyaltyTier: 'atelier_vip',
+    totalVisits: 8,
+    totalSpent: 12500,
+  },
+  {
+    id: 'usr-owner-1',
+    email: 'owner@tiptopshears.com',
+    fullName: 'Clarisse Henderson (Salon Owner)',
+    role: 'owner',
+    branchId: 'all',
+    phone: '+63 917 999 8811',
+    password: 'owner2026!',
+    createdAt: '2026-01-10T00:00:00Z',
+    isActive: true,
   },
   {
     id: 'usr-staff-silang',
@@ -127,6 +142,28 @@ export const INITIAL_USERS: AppUser[] = [
     password: 'client2026!',
     createdAt: '2026-04-10T00:00:00Z',
     isActive: true,
+    loyaltyPoints: 650,
+    loyaltyTier: 'silver',
+    totalVisits: 3,
+    totalSpent: 6500,
+    welcomePromoClaimed: true,
+    welcomePromoClaimedAt: '2026-04-10T11:00:00Z',
+  },
+  {
+    id: 'usr-client-2',
+    email: 'bianca.montes@gmail.com',
+    fullName: 'Bianca Montes',
+    role: 'customer',
+    branchId: 'tagaytay-serin',
+    phone: '+63 917 555 9821',
+    password: 'client2026!',
+    createdAt: '2026-05-18T00:00:00Z',
+    isActive: true,
+    loyaltyPoints: 1200,
+    loyaltyTier: 'gold',
+    totalVisits: 6,
+    totalSpent: 12000,
+    welcomePromoClaimed: false,
   }
 ];
 
@@ -408,4 +445,110 @@ export const INITIAL_MESSAGES: ContactMessage[] = [
     replyNotes: 'Advised client on weekend slots with Master Stylist.'
   }
 ];
+
+export const INITIAL_LOYALTY_REWARDS: LoyaltyRewardItem[] = [
+  {
+    id: 'rew-voucher-200',
+    title: '₱200 Privilege Service Credit',
+    description: 'Direct ₱200 discount applicable on any haircut, manicure, or pedicure service at any branch.',
+    pointsCost: 200,
+    pesoEquivalentValue: 200,
+    category: 'voucher',
+    isActive: true,
+    minTier: 'bronze',
+    badgeText: 'Most Popular'
+  },
+  {
+    id: 'rew-manicure-free',
+    title: 'Haute Glaze Gel Manicure (Complimentary)',
+    description: 'Claim a complete Russian e-file cuticle care and structured gel overlay service using your loyalty points.',
+    pointsCost: 650,
+    pesoEquivalentValue: 650,
+    category: 'nails',
+    serviceId: 'glazed-couture-manicure',
+    isActive: true,
+    minTier: 'bronze',
+    badgeText: 'Full Treatment'
+  },
+  {
+    id: 'rew-shears-cut-free',
+    title: 'Signature Shears & Sculpt Cut',
+    description: 'Precision Japanese high-carbon shears haircut, botanical scalp wash, and silk blowout finish.',
+    pointsCost: 750,
+    pesoEquivalentValue: 750,
+    category: 'hair',
+    serviceId: 'precision-master-cut',
+    isActive: true,
+    minTier: 'silver',
+    badgeText: 'Atelier Signature'
+  },
+  {
+    id: 'rew-pedicure-free',
+    title: 'Aura Botanical Stone Pedicure',
+    description: 'Deep restorative foot ritual featuring warm Himalayan minerals and hot basalt stone acupressure.',
+    pointsCost: 850,
+    pesoEquivalentValue: 850,
+    category: 'spa',
+    serviceId: 'botanical-stone-pedicure',
+    isActive: true,
+    minTier: 'silver',
+    badgeText: 'Spa Ritual'
+  },
+  {
+    id: 'rew-head-spa-free',
+    title: 'Zenith Scalp Detox & Hydrotherapy',
+    description: 'Japanese-style head spa with micro-camera trichoscopic analysis and warm halo cascade ring.',
+    pointsCost: 1200,
+    pesoEquivalentValue: 1200,
+    category: 'spa',
+    serviceId: 'scalp-detox-head-spa',
+    isActive: true,
+    minTier: 'gold',
+    badgeText: 'Exclusive'
+  },
+  {
+    id: 'rew-voucher-1500',
+    title: '₱1,500 VIP Atelier Gift Certificate',
+    description: 'Luxury salon credit gift certificate valid across any package, bridal booking, or color service.',
+    pointsCost: 1500,
+    pesoEquivalentValue: 1500,
+    category: 'voucher',
+    isActive: true,
+    minTier: 'atelier_vip',
+    badgeText: 'VIP Privilege'
+  }
+];
+
+export const INITIAL_LOYALTY_LOGS: LoyaltyLog[] = [
+  {
+    id: 'log-1',
+    userId: 'usr-client-1',
+    userEmail: 'client.sofia@example.com',
+    userName: 'Sofia Villareal',
+    bookingId: 'bk-demo-1',
+    pointsDelta: 75,
+    balanceAfter: 650,
+    type: 'booking_completed',
+    reason: 'Points awarded for completing Signature Shears & Sculpt Cut (₱750 spent, 10% earned)',
+    performedBy: 'system',
+    branchId: 'silang-premier',
+    branchName: 'Premier Mall Silang (Flagship)',
+    createdAt: new Date(Date.now() - 3600000 * 48).toISOString()
+  },
+  {
+    id: 'log-2',
+    userId: 'usr-client-2',
+    userEmail: 'bianca.montes@gmail.com',
+    userName: 'Bianca Montes',
+    pointsDelta: 100,
+    balanceAfter: 1200,
+    type: 'admin_adjustment',
+    reason: 'Store Owner courtesy adjustment for anniversary promotion',
+    performedBy: 'admin@tiptopshears.com',
+    branchId: 'tagaytay-serin',
+    branchName: 'Ayala Malls Serin Tagaytay',
+    createdAt: new Date(Date.now() - 3600000 * 24).toISOString()
+  }
+];
+
 

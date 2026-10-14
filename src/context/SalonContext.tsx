@@ -10,6 +10,9 @@ import {
   AppUser,
   UserRole,
   ContactMessage,
+  LoyaltyRewardItem,
+  LoyaltyLog,
+  LoyaltyTier,
 } from '../types/salon';
 import {
   INITIAL_SERVICES,
@@ -20,6 +23,8 @@ import {
   INITIAL_CATEGORIES,
   INITIAL_USERS,
   INITIAL_MESSAGES,
+  INITIAL_LOYALTY_REWARDS,
+  INITIAL_LOYALTY_LOGS,
 } from '../data/initialData';
 import { getSupabaseClient } from '../lib/supabase';
 
@@ -59,13 +64,26 @@ interface SalonContextType {
   addUser: (user: Omit<AppUser, 'id' | 'createdAt'>) => Promise<AppUser>;
   updateUser: (id: string, updates: Partial<AppUser>) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
+  claimCustomerWelcomePromo: (userId: string, bookingId?: string) => Promise<{ success: boolean; message: string }>;
+  resetCustomerWelcomePromo: (userId: string) => Promise<{ success: boolean; message: string }>;
   isSuperAdmin: boolean;
+  isOwner: boolean;
   isStaff: boolean;
 
   // Contact Messages & Inquiries
   createContactMessage: (msg: Omit<ContactMessage, 'id' | 'createdAt' | 'status'>) => Promise<ContactMessage>;
   updateMessageStatus: (id: string, status: ContactMessage['status'], replyNotes?: string) => Promise<void>;
   deleteContactMessage: (id: string) => Promise<void>;
+
+  // Loyalty & Rewards Program (Integrated with Mobile App & In-Store Bookings)
+  loyaltyRewards: LoyaltyRewardItem[];
+  loyaltyLogs: LoyaltyLog[];
+  adjustUserLoyaltyPoints: (userId: string, pointsDelta: number, reason: string) => Promise<{ success: boolean; newBalance: number }>;
+  awardBookingLoyaltyPoints: (bookingId: string) => Promise<{ success: boolean; pointsAwarded: number; message: string }>;
+  redeemLoyaltyReward: (userId: string, rewardId: string) => Promise<{ success: boolean; message: string }>;
+  addLoyaltyReward: (reward: Omit<LoyaltyRewardItem, 'id'>) => Promise<LoyaltyRewardItem>;
+  updateLoyaltyReward: (id: string, updates: Partial<LoyaltyRewardItem>) => Promise<void>;
+  deleteLoyaltyReward: (id: string) => Promise<void>;
 
   // Supabase Status
   supabaseConnected: boolean;
@@ -93,6 +111,7 @@ interface SalonContextType {
   deletePackage: (id: string) => Promise<void>;
 
   createBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'> & { status?: Booking['status'] }) => Promise<Booking>;
+  updateBooking: (id: string, updates: Partial<Booking>) => Promise<void>;
   updateBookingStatus: (id: string, status: Booking['status']) => Promise<void>;
 
   updateSettings: (updates: Partial<SalonSettings>) => void;
@@ -122,6 +141,8 @@ const LOCAL_STORAGE_KEYS = {
   CATEGORIES: 'tiptop_categories_data',
   USERS: 'tiptop_users_data',
   MESSAGES: 'tiptop_messages_data',
+  LOYALTY_REWARDS: 'tiptop_loyalty_rewards_data',
+  LOYALTY_LOGS: 'tiptop_loyalty_logs_data',
   AUTH: 'tiptop_admin_authenticated',
   ADMIN_EMAIL: 'tiptop_admin_email',
   CURRENT_USER: 'tiptop_current_user',
@@ -203,15 +224,22 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // 3. User Accounts & Roles State
   const [users, setUsers] = useState<AppUser[]>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.USERS);
+    let list: AppUser[] = INITIAL_USERS;
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Self-heal: merge any customer seeds from INITIAL_USERS that were missing from old cached data
+          const existingIds = new Set(parsed.map((u: any) => u.id));
+          const existingEmails = new Set(parsed.map((u: any) => u.email?.toLowerCase()));
+          const missing = INITIAL_USERS.filter(u => !existingIds.has(u.id) && !existingEmails.has(u.email?.toLowerCase()));
+          list = [...parsed, ...missing];
+        }
       } catch (e) {
         console.error('Error parsing cached users', e);
       }
     }
-    return INITIAL_USERS;
+    return list;
   });
 
   // Current logged in user
@@ -385,6 +413,34 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return INITIAL_MESSAGES;
   });
 
+  // Loyalty Rewards Catalog State
+  const [loyaltyRewards, setLoyaltyRewards] = useState<LoyaltyRewardItem[]>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.LOYALTY_REWARDS);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing cached loyalty rewards', e);
+      }
+    }
+    return INITIAL_LOYALTY_REWARDS;
+  });
+
+  // Loyalty Activity Logs / Audit Ledger State
+  const [loyaltyLogs, setLoyaltyLogs] = useState<LoyaltyLog[]>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEYS.LOYALTY_LOGS);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing cached loyalty logs', e);
+      }
+    }
+    return INITIAL_LOYALTY_LOGS;
+  });
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // Supabase status
@@ -405,9 +461,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return localStorage.getItem(LOCAL_STORAGE_KEYS.ADMIN_EMAIL) || null;
   });
 
-  // Role Checks
+  // Role Checks: Super Admin, Owner, Staff, and Mobile Customer
   const isSuperAdmin = currentUser?.role === 'super_admin' || adminEmail === 'admin@tiptopshears.com';
-  const isStaff = currentUser?.role === 'staff' || isSuperAdmin;
+  const isOwner = currentUser?.role === 'owner' || isSuperAdmin;
+  const isStaff = currentUser?.role === 'staff' || isOwner || isSuperAdmin;
 
   // Booking Modal
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -521,6 +578,14 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     localStorage.setItem(LOCAL_STORAGE_KEYS.MESSAGES, JSON.stringify(messages));
   }, [messages]);
 
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.LOYALTY_REWARDS, JSON.stringify(loyaltyRewards));
+  }, [loyaltyRewards]);
+
+  useEffect(() => {
+    localStorage.setItem(LOCAL_STORAGE_KEYS.LOYALTY_LOGS, JSON.stringify(loyaltyLogs));
+  }, [loyaltyLogs]);
+
   // Check Supabase connection on load
   useEffect(() => {
     const checkSupabase = async () => {
@@ -602,8 +667,41 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             branchId: item.branch_id || 'all',
             phone: item.phone || '',
             isActive: item.is_active ?? true,
-            createdAt: item.created_at
+            createdAt: item.created_at,
+            loyaltyPoints: item.loyalty_points ?? 0,
+            loyaltyTier: item.loyalty_tier || 'bronze',
+            totalVisits: item.total_visits ?? 0,
+            totalSpent: Number(item.total_spent ?? 0),
+            welcomePromoClaimed: item.welcome_promo_claimed ?? false,
+            welcomePromoClaimedAt: item.welcome_promo_claimed_at || undefined,
           }));
+
+          // Self-heal: If initial customer accounts are missing in Supabase, upsert them and retain them
+          const existingIds = new Set(mappedUsers.map(u => u.id));
+          const existingEmails = new Set(mappedUsers.map(u => u.email.toLowerCase()));
+          const missingCustomers = INITIAL_USERS.filter(u => u.role === 'customer' && !existingIds.has(u.id) && !existingEmails.has(u.email.toLowerCase()));
+
+          if (missingCustomers.length > 0) {
+            client.from('app_users').upsert(
+              missingCustomers.map(c => ({
+                id: c.id,
+                email: c.email,
+                full_name: c.fullName,
+                role: c.role,
+                branch_id: c.branchId || 'silang-premier',
+                phone: c.phone || null,
+                is_active: c.isActive,
+                loyalty_points: c.loyaltyPoints ?? 0,
+                loyalty_tier: c.loyaltyTier || 'bronze',
+                total_visits: c.totalVisits ?? 0,
+                total_spent: c.totalSpent ?? 0,
+                welcome_promo_claimed: c.welcomePromoClaimed ?? false,
+                welcome_promo_claimed_at: c.welcomePromoClaimedAt || null,
+              }))
+            ).then(() => {});
+            mappedUsers.push(...missingCustomers);
+          }
+
           setUsers(mappedUsers);
         }
       } catch (err) {
@@ -668,7 +766,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           notes: item.notes,
           totalPrice: Number(item.total_price),
           status: item.status,
-          createdAt: item.created_at
+          createdAt: item.created_at,
+          linkedUserId: item.linked_user_id || undefined,
+          loyaltyPointsAwarded: item.loyalty_points_awarded ?? 0,
+          pointsDelivered: item.points_delivered ?? false,
         }));
         setBookings(mappedBookings);
       }
@@ -721,6 +822,54 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
       } catch (err) {
         console.warn('Contact messages sync note:', err);
+      }
+
+      // Fetch loyalty_rewards if table exists
+      try {
+        const { data: rData, error: rErr } = await client.from('loyalty_rewards').select('*').order('points_cost', { ascending: true });
+        if (!rErr && rData && rData.length > 0) {
+          const mappedRewards: LoyaltyRewardItem[] = rData.map(item => ({
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            pointsCost: item.points_cost,
+            pesoEquivalentValue: Number(item.peso_equivalent_value),
+            category: item.category,
+            serviceId: item.service_id || undefined,
+            packageId: item.package_id || undefined,
+            minTier: item.min_tier || 'bronze',
+            badgeText: item.badge_text || undefined,
+            isActive: item.is_active ?? true,
+          }));
+          setLoyaltyRewards(mappedRewards);
+        }
+      } catch (err) {
+        console.warn('Loyalty rewards sync note:', err);
+      }
+
+      // Fetch loyalty_logs if table exists
+      try {
+        const { data: lData, error: lErr } = await client.from('loyalty_logs').select('*').order('created_at', { ascending: false });
+        if (!lErr && lData && lData.length > 0) {
+          const mappedLogs: LoyaltyLog[] = lData.map(item => ({
+            id: item.id,
+            userId: item.user_id,
+            userEmail: item.user_email,
+            userName: item.user_name,
+            bookingId: item.booking_id || undefined,
+            pointsDelta: item.points_delta,
+            balanceAfter: item.balance_after,
+            type: item.type,
+            reason: item.reason,
+            performedBy: item.performed_by || 'system',
+            branchId: item.branch_id || undefined,
+            branchName: item.branch_name || undefined,
+            createdAt: item.created_at,
+          }));
+          setLoyaltyLogs(mappedLogs);
+        }
+      } catch (err) {
+        console.warn('Loyalty logs sync note:', err);
       }
 
       setSupabaseSyncError(null);
@@ -828,10 +977,15 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             customer_phone: bk.customerPhone,
             appointment_date: bk.appointmentDate,
             appointment_time: bk.appointmentTime,
-            stylist: bk.stylist,
+            stylist: bk.stylist || 'Assigned Atelier Specialist',
             notes: bk.notes,
             total_price: bk.totalPrice,
-            status: bk.status
+            status: bk.status,
+            linked_user_id: bk.linkedUserId || null,
+            loyalty_points_awarded: bk.loyaltyPointsAwarded || 0,
+            points_delivered: bk.pointsDelivered || false,
+            applied_promo: bk.appliedPromo || null,
+            discount_amount: bk.discountAmount || 0,
           }))
         );
       }
@@ -856,17 +1010,31 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         updated_at: new Date().toISOString()
       });
 
-      // 8. App Users
+      // 8. App Users (including Registered Customers & Mobile Tagging)
       if (users.length > 0) {
+        const existingIds = new Set(users.map(u => u.id));
+        const missingCustomers = INITIAL_USERS.filter(u => !existingIds.has(u.id));
+        const allUsersToSync = [...users, ...missingCustomers];
+        if (missingCustomers.length > 0) {
+          setUsers(allUsersToSync);
+        }
+
         await client.from('app_users').upsert(
-          users.map(u => ({
+          allUsersToSync.map(u => ({
             id: u.id,
             email: u.email,
             full_name: u.fullName,
             role: u.role,
             branch_id: u.branchId === 'all' ? null : u.branchId,
             phone: u.phone,
-            is_active: u.isActive
+            is_active: u.isActive,
+            loyalty_points: u.loyaltyPoints ?? 0,
+            loyalty_tier: u.loyaltyTier || 'bronze',
+            total_visits: u.totalVisits ?? 0,
+            total_spent: u.totalSpent ?? 0,
+            welcome_promo_claimed: u.welcomePromoClaimed ?? false,
+            welcome_promo_claimed_at: u.welcomePromoClaimedAt || null,
+            welcome_promo_booking_id: u.welcomePromoBookingId || null,
           }))
         );
       }
@@ -891,14 +1059,60 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         );
         if (msgErr) {
           console.warn('Could not sync contact_messages to Supabase:', msgErr);
-          messagesWarning = `Tables 1-8 synced! Note: 'contact_messages' table was not found in Supabase (run Clean Schema in Supabase SQL editor to include it).`;
+          messagesWarning = `Note: 'contact_messages' table was not found in Supabase (run Clean Schema in SQL editor to create it).`;
+        }
+      }
+
+      // 10. Loyalty Rewards Catalog
+      if (loyaltyRewards.length > 0) {
+        const { error: rewErr } = await client.from('loyalty_rewards').upsert(
+          loyaltyRewards.map(r => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            points_cost: r.pointsCost,
+            peso_equivalent_value: r.pesoEquivalentValue,
+            category: r.category,
+            service_id: r.serviceId || null,
+            package_id: r.packageId || null,
+            min_tier: r.minTier || 'bronze',
+            badge_text: r.badgeText || null,
+            is_active: r.isActive
+          }))
+        );
+        if (rewErr) {
+          console.warn('Could not sync loyalty_rewards to Supabase:', rewErr);
+        }
+      }
+
+      // 11. Loyalty Activity Ledger Logs
+      if (loyaltyLogs.length > 0) {
+        const { error: logErr } = await client.from('loyalty_logs').upsert(
+          loyaltyLogs.map(l => ({
+            id: l.id,
+            user_id: l.userId,
+            user_email: l.userEmail,
+            user_name: l.userName,
+            booking_id: l.bookingId || null,
+            points_delta: l.pointsDelta,
+            balance_after: l.balanceAfter,
+            type: l.type,
+            reason: l.reason,
+            performed_by: l.performedBy || 'system',
+            branch_id: l.branchId || null,
+            branch_name: l.branchName || null,
+            created_at: l.createdAt
+          }))
+        );
+        if (logErr) {
+          console.warn('Could not sync loyalty_logs to Supabase:', logErr);
         }
       }
 
       await syncWithSupabase();
       return {
         success: true,
-        message: messagesWarning || `Full Cloud Sync Complete! All 9 tables synchronized with Supabase: ${branches.length} branches, ${categories.length} categories, ${services.length} services, ${packages.length} packages, ${bookings.length} bookings, ${gallery.length} gallery photos, ${users.length} users, and ${messages.length} inquiries.`
+        message: messagesWarning || `Full Cloud Sync Complete! All 11 tables synchronized with Supabase: ${branches.length} branches, ${categories.length} categories, ${services.length} services, ${packages.length} packages, ${bookings.length} bookings, ${gallery.length} gallery items, ${users.length} users, ${messages.length} inquiries, ${loyaltyRewards.length} loyalty rewards, and ${loyaltyLogs.length} loyalty ledger logs.`
       };
     } catch (err: any) {
       console.error('Cloud sync error:', err);
@@ -952,11 +1166,13 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         });
         if (!error && data.user) {
           const matchingAppUser = users.find(u => u.email.toLowerCase() === cleanEmail);
-          const assignedRole = matchingAppUser?.role || (cleanEmail.includes('admin') ? 'super_admin' : 'staff');
+          const assignedRole = matchingAppUser?.role || (
+            cleanEmail.includes('admin') ? 'super_admin' : cleanEmail.includes('owner') ? 'owner' : 'staff'
+          );
           const authenticatedUser: AppUser = matchingAppUser || {
             id: data.user.id,
             email: data.user.email || cleanEmail,
-            fullName: data.user.user_metadata?.full_name || 'Staff Member',
+            fullName: data.user.user_metadata?.full_name || (assignedRole === 'owner' ? 'Salon Owner' : 'Staff Member'),
             role: assignedRole,
             branchId: 'all',
             createdAt: new Date().toISOString(),
@@ -980,7 +1196,9 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const foundUser = users.find(u => u.email.toLowerCase() === cleanEmail);
     if (foundUser) {
       // Validate password if configured, or default demo password
-      const validPass = foundUser.password ? foundUser.password === pass : (pass === 'tiptop2026!' || pass === 'staff2026!' || pass === 'admin123');
+      const validPass = foundUser.password ? foundUser.password === pass : (
+        pass === 'tiptop2026!' || pass === 'staff2026!' || pass === 'owner2026!' || pass === 'admin123'
+      );
       if (validPass) {
         setIsAdminAuthenticated(true);
         setAdminEmail(foundUser.email);
@@ -1013,9 +1231,30 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { success: true };
     }
 
+    // 4. Fallback demo owner shortcut
+    if (cleanEmail === 'owner@tiptopshears.com' && (pass === 'owner2026!' || pass === 'tiptop2026!')) {
+      const ownerUser: AppUser = {
+        id: 'usr-owner-1',
+        email: 'owner@tiptopshears.com',
+        fullName: 'Clarisse Henderson (Salon Owner)',
+        role: 'owner',
+        branchId: 'all',
+        phone: '+63 917 999 8811',
+        createdAt: new Date().toISOString(),
+        isActive: true,
+      };
+      setIsAdminAuthenticated(true);
+      setAdminEmail(ownerUser.email);
+      setCurrentUser(ownerUser);
+      localStorage.setItem(LOCAL_STORAGE_KEYS.AUTH, 'true');
+      localStorage.setItem(LOCAL_STORAGE_KEYS.ADMIN_EMAIL, ownerUser.email);
+      localStorage.setItem(LOCAL_STORAGE_KEYS.CURRENT_USER, JSON.stringify(ownerUser));
+      return { success: true };
+    }
+
     return {
       success: false,
-      error: 'Invalid credentials. Try Super Admin: admin@tiptopshears.com / tiptop2026! or Staff: staff.silang@tiptopshears.com / staff2026!'
+      error: 'Invalid credentials. Try Super Admin: admin@tiptopshears.com, Salon Owner: owner@tiptopshears.com, or Staff: staff.silang@tiptopshears.com'
     };
   };
 
@@ -1166,6 +1405,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ...userData,
       id: newId,
       createdAt: new Date().toISOString(),
+      loyaltyPoints: userData.loyaltyPoints ?? 0,
+      loyaltyTier: userData.loyaltyTier || 'bronze',
+      totalVisits: userData.totalVisits ?? 0,
+      totalSpent: userData.totalSpent ?? 0,
     };
 
     setUsers(prev => [newUser, ...prev]);
@@ -1180,6 +1423,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         branch_id: newUser.branchId === 'all' ? null : newUser.branchId,
         phone: newUser.phone,
         is_active: newUser.isActive,
+        loyalty_points: newUser.loyaltyPoints,
+        loyalty_tier: newUser.loyaltyTier,
+        total_visits: newUser.totalVisits,
+        total_spent: newUser.totalSpent,
       }).then(({ error }) => {
         if (error) console.error('Supabase user insert error', error);
       });
@@ -1203,11 +1450,53 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (updates.branchId !== undefined) payload.branch_id = updates.branchId === 'all' ? null : updates.branchId;
       if (updates.phone !== undefined) payload.phone = updates.phone;
       if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+      if (updates.loyaltyPoints !== undefined) payload.loyalty_points = updates.loyaltyPoints;
+      if (updates.loyaltyTier !== undefined) payload.loyalty_tier = updates.loyaltyTier;
+      if (updates.totalVisits !== undefined) payload.total_visits = updates.totalVisits;
+      if (updates.totalSpent !== undefined) payload.total_spent = updates.totalSpent;
+      if (updates.welcomePromoClaimed !== undefined) payload.welcome_promo_claimed = updates.welcomePromoClaimed;
+      if (updates.welcomePromoClaimedAt !== undefined) payload.welcome_promo_claimed_at = updates.welcomePromoClaimedAt;
 
       client.from('app_users').update(payload).eq('id', id).then(({ error }) => {
         if (error) console.error('Supabase user update error', error);
       });
     }
+  };
+
+  const claimCustomerWelcomePromo = async (userId: string, bookingId?: string): Promise<{ success: boolean; message: string }> => {
+    const target = users.find(u => u.id === userId);
+    if (!target) return { success: false, message: 'User account not found' };
+    if (target.welcomePromoClaimed) {
+      return { success: false, message: 'First-Visit 20% Off welcome promo has already been claimed by this customer.' };
+    }
+
+    const claimedAt = new Date().toISOString();
+    await updateUser(userId, {
+      welcomePromoClaimed: true,
+      welcomePromoClaimedAt: claimedAt,
+      welcomePromoBookingId: bookingId,
+    });
+
+    return {
+      success: true,
+      message: `Successfully tagged First-Visit 20% Off promo as claimed for ${target.fullName}.`
+    };
+  };
+
+  const resetCustomerWelcomePromo = async (userId: string): Promise<{ success: boolean; message: string }> => {
+    const target = users.find(u => u.id === userId);
+    if (!target) return { success: false, message: 'User account not found' };
+
+    await updateUser(userId, {
+      welcomePromoClaimed: false,
+      welcomePromoClaimedAt: undefined,
+      welcomePromoBookingId: undefined,
+    });
+
+    return {
+      success: true,
+      message: `Reset First-Visit 20% Off promo to available for ${target.fullName}.`
+    };
   };
 
   const deleteUser = async (id: string): Promise<void> => {
@@ -1403,13 +1692,362 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return newBooking;
   };
 
+  const calculateLoyaltyTier = (points: number): LoyaltyTier => {
+    if (points >= 2000) return 'atelier_vip';
+    if (points >= 1000) return 'gold';
+    if (points >= 500) return 'silver';
+    return 'bronze';
+  };
+
   const updateBookingStatus = async (id: string, status: Booking['status']): Promise<void> => {
-    setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+    const booking = bookings.find(b => b.id === id);
+    let pointsAwarded = 0;
+    let willDeliverPoints = false;
+
+    // Points disbursement when booking transitions to 'completed'
+    if (booking && status === 'completed' && !booking.pointsDelivered) {
+      willDeliverPoints = true;
+      // Standard Formula: 10% of total price in loyalty points (e.g., ₱750 spent = 75 points)
+      pointsAwarded = Math.max(10, Math.round(booking.totalPrice * 0.10));
+
+      // Locate user linked or by customer email
+      const matchedUser = users.find(u =>
+        (booking.linkedUserId && u.id === booking.linkedUserId) ||
+        (u.email && booking.customerEmail && u.email.toLowerCase() === booking.customerEmail.toLowerCase())
+      );
+
+      if (matchedUser) {
+        const newBalance = (matchedUser.loyaltyPoints || 0) + pointsAwarded;
+        const newTotalSpent = (matchedUser.totalSpent || 0) + booking.totalPrice;
+        const newTotalVisits = (matchedUser.totalVisits || 0) + 1;
+        const newTier = calculateLoyaltyTier(newBalance);
+
+        // Update matched user
+        setUsers(prev => prev.map(u => u.id === matchedUser.id ? {
+          ...u,
+          loyaltyPoints: newBalance,
+          totalSpent: newTotalSpent,
+          totalVisits: newTotalVisits,
+          loyaltyTier: newTier,
+          pointsDeliveredAt: new Date().toISOString()
+        } : u));
+
+        // Create Loyalty Audit Ledger entry
+        const newLog: LoyaltyLog = {
+          id: `log-${Date.now().toString().slice(-6)}`,
+          userId: matchedUser.id,
+          userEmail: matchedUser.email,
+          userName: matchedUser.fullName,
+          bookingId: booking.id,
+          pointsDelta: pointsAwarded,
+          balanceAfter: newBalance,
+          type: 'booking_completed',
+          reason: `Earned ${pointsAwarded} pts for completing booking #${booking.id} (${booking.serviceTitle} - ₱${booking.totalPrice.toLocaleString()})`,
+          performedBy: currentUser?.email || adminEmail || 'system',
+          branchId: booking.branchId,
+          branchName: booking.branchName,
+          createdAt: new Date().toISOString()
+        };
+
+        setLoyaltyLogs(prev => [newLog, ...prev]);
+
+        // Cloud sync if connected
+        const client = getSupabaseClient(supabaseUrl, supabaseKey);
+        if (client && supabaseConnected) {
+          client.from('app_users').update({
+            loyalty_points: newBalance,
+            loyalty_tier: newTier,
+            total_visits: newTotalVisits,
+            total_spent: newTotalSpent
+          }).eq('id', matchedUser.id).then(({ error }) => {
+            if (error) console.warn('Supabase loyalty user update note:', error);
+          });
+
+          client.from('loyalty_logs').insert({
+            id: newLog.id,
+            user_id: newLog.userId,
+            user_email: newLog.userEmail,
+            user_name: newLog.userName,
+            booking_id: newLog.bookingId,
+            points_delta: newLog.pointsDelta,
+            balance_after: newLog.balanceAfter,
+            type: newLog.type,
+            reason: newLog.reason,
+            performed_by: newLog.performedBy,
+            branch_id: newLog.branchId,
+            branch_name: newLog.branchName
+          }).then(({ error }) => {
+            if (error) console.warn('Supabase loyalty log insert note:', error);
+          });
+        }
+      }
+    }
+
+    // Update booking state
+    setBookings(prev => prev.map(b => b.id === id ? {
+      ...b,
+      status,
+      ...(willDeliverPoints ? { loyaltyPointsAwarded: pointsAwarded, pointsDelivered: true } : {})
+    } : b));
 
     const client = getSupabaseClient(supabaseUrl, supabaseKey);
     if (client && supabaseConnected) {
-      client.from('bookings').update({ status }).eq('id', id).then(({ error }) => {
+      const payload: Record<string, any> = { status };
+      if (willDeliverPoints) {
+        payload.loyalty_points_awarded = pointsAwarded;
+        payload.points_delivered = true;
+      }
+      client.from('bookings').update(payload).eq('id', id).then(({ error }) => {
         if (error) console.error('Supabase booking status error', error);
+      });
+    }
+  };
+
+  const updateBooking = async (id: string, updates: Partial<Booking>): Promise<void> => {
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      const payload: Record<string, any> = {};
+      if (updates.stylist !== undefined) payload.stylist = updates.stylist;
+      if (updates.status !== undefined) payload.status = updates.status;
+      if (updates.notes !== undefined) payload.notes = updates.notes;
+      if (updates.totalPrice !== undefined) payload.total_price = updates.totalPrice;
+      if (updates.appointmentDate !== undefined) payload.appointment_date = updates.appointmentDate;
+      if (updates.appointmentTime !== undefined) payload.appointment_time = updates.appointmentTime;
+      if (updates.linkedUserId !== undefined) payload.linked_user_id = updates.linkedUserId;
+      if (updates.loyaltyPointsAwarded !== undefined) payload.loyalty_points_awarded = updates.loyaltyPointsAwarded;
+      if (updates.pointsDelivered !== undefined) payload.points_delivered = updates.pointsDelivered;
+      if (updates.appliedPromo !== undefined) payload.applied_promo = updates.appliedPromo;
+      if (updates.discountAmount !== undefined) payload.discount_amount = updates.discountAmount;
+
+      client.from('bookings').update(payload).eq('id', id).then(({ error }) => {
+        if (error) console.error('Supabase booking update error', error);
+      });
+    }
+  };
+
+  // Explicit Award Points Action (e.g. from Admin manual booking review)
+  const awardBookingLoyaltyPoints = async (bookingId: string): Promise<{ success: boolean; pointsAwarded: number; message: string }> => {
+    const booking = bookings.find(b => b.id === bookingId);
+    if (!booking) return { success: false, pointsAwarded: 0, message: 'Booking not found' };
+    if (booking.pointsDelivered) {
+      return { success: false, pointsAwarded: booking.loyaltyPointsAwarded || 0, message: 'Points have already been delivered for this appointment.' };
+    }
+
+    const calculatedPoints = Math.max(10, Math.round(booking.totalPrice * 0.10));
+    await updateBookingStatus(bookingId, 'completed');
+    return {
+      success: true,
+      pointsAwarded: calculatedPoints,
+      message: `Successfully completed booking and credited ${calculatedPoints} loyalty points to guest!`
+    };
+  };
+
+  // Store Owner Points Adjustment (with audit reason & history logging)
+  const adjustUserLoyaltyPoints = async (
+    userId: string,
+    pointsDelta: number,
+    reason: string
+  ): Promise<{ success: boolean; newBalance: number }> => {
+    const targetUser = users.find(u => u.id === userId);
+    if (!targetUser) return { success: false, newBalance: 0 };
+
+    const currentPoints = targetUser.loyaltyPoints || 0;
+    const newBalance = Math.max(0, currentPoints + pointsDelta);
+    const newTier = calculateLoyaltyTier(newBalance);
+
+    setUsers(prev => prev.map(u => u.id === userId ? {
+      ...u,
+      loyaltyPoints: newBalance,
+      loyaltyTier: newTier
+    } : u));
+
+    if (currentUser?.id === userId) {
+      setCurrentUser(prev => prev ? { ...prev, loyaltyPoints: newBalance, loyaltyTier: newTier } : null);
+    }
+
+    const newLog: LoyaltyLog = {
+      id: `log-${Date.now().toString().slice(-6)}`,
+      userId: targetUser.id,
+      userEmail: targetUser.email,
+      userName: targetUser.fullName,
+      pointsDelta,
+      balanceAfter: newBalance,
+      type: 'admin_adjustment',
+      reason: reason || `Manual adjustment by Store Owner (${pointsDelta >= 0 ? '+' : ''}${pointsDelta} pts)`,
+      performedBy: currentUser?.email || adminEmail || 'owner@tiptopshears.com',
+      createdAt: new Date().toISOString()
+    };
+
+    setLoyaltyLogs(prev => [newLog, ...prev]);
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client.from('app_users').update({
+        loyalty_points: newBalance,
+        loyalty_tier: newTier
+      }).eq('id', userId).then(({ error }) => {
+        if (error) console.warn('Supabase adjust points user note:', error);
+      });
+
+      client.from('loyalty_logs').insert({
+        id: newLog.id,
+        user_id: newLog.userId,
+        user_email: newLog.userEmail,
+        user_name: newLog.userName,
+        points_delta: newLog.pointsDelta,
+        balance_after: newLog.balanceAfter,
+        type: newLog.type,
+        reason: newLog.reason,
+        performed_by: newLog.performedBy
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase adjust points log note:', error);
+      });
+    }
+
+    return { success: true, newBalance };
+  };
+
+  // Customer or Staff Claiming / Redemption of Loyalty Rewards
+  const redeemLoyaltyReward = async (
+    userId: string,
+    rewardId: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const targetUser = users.find(u => u.id === userId);
+    const reward = loyaltyRewards.find(r => r.id === rewardId);
+    if (!targetUser || !reward) {
+      return { success: false, message: 'User or reward item not found' };
+    }
+
+    const currentPoints = targetUser.loyaltyPoints || 0;
+    if (currentPoints < reward.pointsCost) {
+      return {
+        success: false,
+        message: `Insufficient points! You have ${currentPoints} pts, but this reward requires ${reward.pointsCost} pts.`
+      };
+    }
+
+    const newBalance = currentPoints - reward.pointsCost;
+    const newTier = calculateLoyaltyTier(newBalance);
+
+    setUsers(prev => prev.map(u => u.id === userId ? {
+      ...u,
+      loyaltyPoints: newBalance,
+      loyaltyTier: newTier
+    } : u));
+
+    if (currentUser?.id === userId) {
+      setCurrentUser(prev => prev ? { ...prev, loyaltyPoints: newBalance, loyaltyTier: newTier } : null);
+    }
+
+    const newLog: LoyaltyLog = {
+      id: `log-${Date.now().toString().slice(-6)}`,
+      userId: targetUser.id,
+      userEmail: targetUser.email,
+      userName: targetUser.fullName,
+      pointsDelta: -reward.pointsCost,
+      balanceAfter: newBalance,
+      type: 'reward_redemption',
+      reason: `Claimed reward privilege: ${reward.title} (Value: ₱${reward.pesoEquivalentValue.toLocaleString()})`,
+      performedBy: currentUser?.email || 'customer',
+      createdAt: new Date().toISOString()
+    };
+
+    setLoyaltyLogs(prev => [newLog, ...prev]);
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client.from('app_users').update({
+        loyalty_points: newBalance,
+        loyalty_tier: newTier
+      }).eq('id', userId).then(({ error }) => {
+        if (error) console.warn('Supabase redeem user note:', error);
+      });
+
+      client.from('loyalty_logs').insert({
+        id: newLog.id,
+        user_id: newLog.userId,
+        user_email: newLog.userEmail,
+        user_name: newLog.userName,
+        points_delta: newLog.pointsDelta,
+        balance_after: newLog.balanceAfter,
+        type: newLog.type,
+        reason: newLog.reason,
+        performed_by: newLog.performedBy
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase redeem log note:', error);
+      });
+    }
+
+    return {
+      success: true,
+      message: `Reward claimed! Deducted ${reward.pointsCost} points. Current balance: ${newBalance} pts.`
+    };
+  };
+
+  // CRUD for Loyalty Reward Items
+  const addLoyaltyReward = async (rewardData: Omit<LoyaltyRewardItem, 'id'>): Promise<LoyaltyRewardItem> => {
+    const newId = `rew-${Date.now().toString().slice(-6)}`;
+    const newReward: LoyaltyRewardItem = {
+      ...rewardData,
+      id: newId
+    };
+
+    setLoyaltyRewards(prev => [...prev, newReward]);
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client.from('loyalty_rewards').insert({
+        id: newReward.id,
+        title: newReward.title,
+        description: newReward.description,
+        points_cost: newReward.pointsCost,
+        peso_equivalent_value: newReward.pesoEquivalentValue,
+        category: newReward.category,
+        service_id: newReward.serviceId || null,
+        package_id: newReward.packageId || null,
+        min_tier: newReward.minTier || 'bronze',
+        badge_text: newReward.badgeText || null,
+        is_active: newReward.isActive
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase loyalty reward insert note:', error);
+      });
+    }
+
+    return newReward;
+  };
+
+  const updateLoyaltyReward = async (id: string, updates: Partial<LoyaltyRewardItem>): Promise<void> => {
+    setLoyaltyRewards(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      const payload: Record<string, any> = {};
+      if (updates.title !== undefined) payload.title = updates.title;
+      if (updates.description !== undefined) payload.description = updates.description;
+      if (updates.pointsCost !== undefined) payload.points_cost = updates.pointsCost;
+      if (updates.pesoEquivalentValue !== undefined) payload.peso_equivalent_value = updates.pesoEquivalentValue;
+      if (updates.category !== undefined) payload.category = updates.category;
+      if (updates.serviceId !== undefined) payload.service_id = updates.serviceId;
+      if (updates.packageId !== undefined) payload.package_id = updates.packageId;
+      if (updates.minTier !== undefined) payload.min_tier = updates.minTier;
+      if (updates.badgeText !== undefined) payload.badge_text = updates.badgeText;
+      if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+
+      client.from('loyalty_rewards').update(payload).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase loyalty reward update note:', error);
+      });
+    }
+  };
+
+  const deleteLoyaltyReward = async (id: string): Promise<void> => {
+    setLoyaltyRewards(prev => prev.filter(r => r.id !== id));
+
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (client && supabaseConnected) {
+      client.from('loyalty_rewards').delete().eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase loyalty reward delete note:', error);
       });
     }
   };
@@ -1592,7 +2230,10 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addUser,
         updateUser,
         deleteUser,
+        claimCustomerWelcomePromo,
+        resetCustomerWelcomePromo,
         isSuperAdmin,
+        isOwner,
         isStaff,
         supabaseConnected,
         supabaseUrl,
@@ -1613,7 +2254,16 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         updatePackage,
         deletePackage,
         createBooking,
+        updateBooking,
         updateBookingStatus,
+        awardBookingLoyaltyPoints,
+        adjustUserLoyaltyPoints,
+        redeemLoyaltyReward,
+        addLoyaltyReward,
+        updateLoyaltyReward,
+        deleteLoyaltyReward,
+        loyaltyRewards,
+        loyaltyLogs,
         updateSettings,
         isBookingModalOpen,
         preselectedItem,

@@ -37,14 +37,24 @@ import {
   Upload,
   Search,
   MessageSquare,
-  Inbox
+  Inbox,
+  Award,
+  Coins,
+  History,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+  Smartphone,
+  Globe,
+  Terminal,
+  Code,
 } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
-import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking, ContactMessage } from '../../types/salon';
-import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, uploadToSupabaseStorage, getSupabaseClient } from '../../lib/supabase';
+import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking, ContactMessage, LoyaltyRewardItem, LoyaltyLog, LoyaltyTier } from '../../types/salon';
+import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, SUPABASE_LOYALTY_MIGRATION_SQL, uploadToSupabaseStorage, getSupabaseClient } from '../../lib/supabase';
 import { getImageUrl, handleImageError, CDN_IMAGES } from '../../lib/imageHelper';
 
-type AdminTab = 'bookings' | 'messages' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
+type AdminTab = 'bookings' | 'messages' | 'loyalty' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
 
 export const AdminPage: React.FC = () => {
   const {
@@ -52,6 +62,7 @@ export const AdminPage: React.FC = () => {
     adminEmail,
     currentUser,
     isSuperAdmin,
+    isOwner,
     isStaff,
     adminLogin,
     adminLogout,
@@ -83,7 +94,10 @@ export const AdminPage: React.FC = () => {
     createPackage,
     updatePackage,
     deletePackage,
+    updateBooking,
     updateBookingStatus,
+    claimCustomerWelcomePromo,
+    resetCustomerWelcomePromo,
     updateSettings,
     supabaseConnected,
     supabaseUrl,
@@ -97,6 +111,14 @@ export const AdminPage: React.FC = () => {
     messages,
     updateMessageStatus,
     deleteContactMessage,
+    loyaltyRewards,
+    loyaltyLogs,
+    adjustUserLoyaltyPoints,
+    awardBookingLoyaltyPoints,
+    redeemLoyaltyReward,
+    addLoyaltyReward,
+    updateLoyaltyReward,
+    deleteLoyaltyReward,
   } = useSalon();
 
   // Tab navigation (Default to Appointments for high daily operational efficiency)
@@ -211,6 +233,45 @@ export const AdminPage: React.FC = () => {
     branchId: 'silang-premier',
     phone: '',
     password: '',
+    isActive: true,
+    loyaltyPoints: 0,
+    loyaltyTier: 'bronze' as LoyaltyTier
+  });
+
+  // User Accounts Role Filter (All / Store Team / Customers)
+  const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'store_team' | 'customer'>('all');
+
+  // Loyalty Admin Management State
+  const [selectedLoyaltySubTab, setSelectedLoyaltySubTab] = useState<'users' | 'ledger' | 'rewards'>('users');
+  const [loyaltySearchQuery, setLoyaltySearchQuery] = useState('');
+  const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+  const [newCustomerForm, setNewCustomerForm] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    branchId: 'silang-premier',
+    initialPoints: 100,
+  });
+  const [isSubmittingNewCustomer, setIsSubmittingNewCustomer] = useState(false);
+  const [selectedAdjustUser, setSelectedAdjustUser] = useState<AppUser | null>(null);
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [adjustPointsDelta, setAdjustPointsDelta] = useState<number>(50);
+  const [adjustReason, setAdjustReason] = useState<string>('Store Owner courtesy adjustment');
+  const [isSubmittingAdjust, setIsSubmittingAdjust] = useState(false);
+  const [loyaltyFeedbackMsg, setLoyaltyFeedbackMsg] = useState<string | null>(null);
+
+  // Loyalty Reward Item Modal
+  const [editingRewardItem, setEditingRewardItem] = useState<LoyaltyRewardItem | null>(null);
+  const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
+  const [rewardForm, setRewardForm] = useState({
+    title: '',
+    description: '',
+    pointsCost: 500,
+    pesoEquivalentValue: 500,
+    category: 'voucher' as LoyaltyRewardItem['category'],
+    serviceId: '',
+    minTier: 'bronze' as LoyaltyTier,
+    badgeText: 'Member Privilege',
     isActive: true
   });
 
@@ -685,7 +746,7 @@ export const AdminPage: React.FC = () => {
         customerPhone: customerBookingForm.customerPhone.trim(),
         appointmentDate: customerBookingForm.appointmentDate,
         appointmentTime: customerBookingForm.appointmentTime,
-        stylist: 'Assigned Stylist',
+        stylist: customerBookingForm.stylist || 'Assigned Atelier Specialist',
         notes: `${sourcePrefix}${customerBookingForm.notes.trim()}`,
         totalPrice: finalPrice,
         status: customerBookingForm.status
@@ -746,7 +807,9 @@ export const AdminPage: React.FC = () => {
       branchId: branches[0]?.id || 'silang-premier',
       phone: '',
       password: '',
-      isActive: true
+      isActive: true,
+      loyaltyPoints: 0,
+      loyaltyTier: 'bronze'
     });
     setIsUserModalOpen(true);
   };
@@ -760,7 +823,9 @@ export const AdminPage: React.FC = () => {
       branchId: user.branchId || 'all',
       phone: user.phone || '',
       password: user.password || '',
-      isActive: user.isActive
+      isActive: user.isActive,
+      loyaltyPoints: user.loyaltyPoints || 0,
+      loyaltyTier: user.loyaltyTier || 'bronze'
     });
     setIsUserModalOpen(true);
   };
@@ -769,18 +834,146 @@ export const AdminPage: React.FC = () => {
     e.preventDefault();
     if (!userForm.email || !userForm.fullName) return;
 
+    // Privilege constraint: Store Owners can only create/update Staff and Customer accounts.
+    // Only Super Admin can create/designate Store Owners and Super Admins.
+    let roleToAssign = userForm.role;
+    if (!isSuperAdmin) {
+      if (roleToAssign === 'owner' || roleToAssign === 'super_admin') {
+        roleToAssign = 'staff';
+      }
+    }
+
+    const payload = {
+      ...userForm,
+      role: roleToAssign,
+    };
+
     if (editingUser) {
-      await updateUser(editingUser.id, userForm);
+      await updateUser(editingUser.id, payload);
     } else {
-      await addUser(userForm);
+      await addUser(payload);
     }
     setIsUserModalOpen(false);
   };
 
   // -------------------------------------------------------------
+  // LOYALTY PROGRAM STORE OWNER HANDLERS
+  // -------------------------------------------------------------
+  const openAdjustPointsModal = (user: AppUser) => {
+    setSelectedAdjustUser(user);
+    setAdjustPointsDelta(50);
+    setAdjustReason('Store Owner courtesy adjustment');
+    setIsAdjustModalOpen(true);
+  };
+
+  const handleAdjustPointsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAdjustUser) return;
+    setIsSubmittingAdjust(true);
+    const res = await adjustUserLoyaltyPoints(selectedAdjustUser.id, adjustPointsDelta, adjustReason);
+    setIsSubmittingAdjust(false);
+    if (res.success) {
+      setLoyaltyFeedbackMsg(`Updated ${selectedAdjustUser.fullName}'s balance to ${res.newBalance} pts (${adjustPointsDelta >= 0 ? '+' : ''}${adjustPointsDelta} pts).`);
+      setIsAdjustModalOpen(false);
+      setTimeout(() => setLoyaltyFeedbackMsg(null), 4000);
+    }
+  };
+
+  const handleCreateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCustomerForm.fullName.trim() || !newCustomerForm.email.trim()) return;
+    setIsSubmittingNewCustomer(true);
+    try {
+      const created = await addUser({
+        email: newCustomerForm.email.trim(),
+        fullName: newCustomerForm.fullName.trim(),
+        role: 'customer',
+        branchId: newCustomerForm.branchId,
+        phone: newCustomerForm.phone.trim(),
+        isActive: true,
+        loyaltyPoints: newCustomerForm.initialPoints || 100,
+        loyaltyTier: (newCustomerForm.initialPoints || 100) >= 500 ? 'silver' : 'bronze',
+        totalVisits: 0,
+        totalSpent: 0,
+        welcomePromoClaimed: false,
+      });
+      setLoyaltyFeedbackMsg(`Customer account registered for ${created.fullName} with ${newCustomerForm.initialPoints || 100} welcome points!`);
+      setIsAddCustomerModalOpen(false);
+      setNewCustomerForm({
+        fullName: '',
+        email: '',
+        phone: '',
+        branchId: branches[0]?.id || 'silang-premier',
+        initialPoints: 100,
+      });
+      setTimeout(() => setLoyaltyFeedbackMsg(null), 5000);
+    } catch (err) {
+      console.error('Create customer error:', err);
+    } finally {
+      setIsSubmittingNewCustomer(false);
+    }
+  };
+
+  const handleClaimWelcomePromo = async (user: AppUser) => {
+    const res = await claimCustomerWelcomePromo(user.id);
+    setLoyaltyFeedbackMsg(res.message);
+    setTimeout(() => setLoyaltyFeedbackMsg(null), 4000);
+  };
+
+  const handleResetWelcomePromo = async (user: AppUser) => {
+    const res = await resetCustomerWelcomePromo(user.id);
+    setLoyaltyFeedbackMsg(res.message);
+    setTimeout(() => setLoyaltyFeedbackMsg(null), 4000);
+  };
+
+  const openNewRewardModal = () => {
+    setEditingRewardItem(null);
+    setRewardForm({
+      title: '',
+      description: '',
+      pointsCost: 500,
+      pesoEquivalentValue: 500,
+      category: 'voucher',
+      serviceId: '',
+      minTier: 'bronze',
+      badgeText: 'Privilege',
+      isActive: true
+    });
+    setIsRewardModalOpen(true);
+  };
+
+  const openEditRewardModal = (reward: LoyaltyRewardItem) => {
+    setEditingRewardItem(reward);
+    setRewardForm({
+      title: reward.title,
+      description: reward.description,
+      pointsCost: reward.pointsCost,
+      pesoEquivalentValue: reward.pesoEquivalentValue,
+      category: reward.category,
+      serviceId: reward.serviceId || '',
+      minTier: reward.minTier || 'bronze',
+      badgeText: reward.badgeText || '',
+      isActive: reward.isActive
+    });
+    setIsRewardModalOpen(true);
+  };
+
+  const handleSaveRewardItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rewardForm.title || !rewardForm.pointsCost) return;
+
+    if (editingRewardItem) {
+      await updateLoyaltyReward(editingRewardItem.id, rewardForm);
+    } else {
+      await addLoyaltyReward(rewardForm);
+    }
+    setIsRewardModalOpen(false);
+  };
+
+  // -------------------------------------------------------------
   // SUPABASE CREDENTIALS & SEED HANDLERS
   // -------------------------------------------------------------
-  const [selectedSqlTab, setSelectedSqlTab] = useState<'clean' | 'seed'>('clean');
+  const [selectedSqlTab, setSelectedSqlTab] = useState<'clean' | 'seed' | 'loyalty'>('clean');
   const [isSeedingCloud, setIsSeedingCloud] = useState<boolean>(false);
 
   const handleConnectSupabase = async () => {
@@ -791,14 +984,18 @@ export const AdminPage: React.FC = () => {
 
   const handleFullCloudSync = async () => {
     setIsSeedingCloud(true);
-    setSupabaseMessage('Executing Full Cloud Sync: Pushing local/offline changes & refetching all 9 tables...');
+    setSupabaseMessage('Executing Full Cloud Sync: Pushing local changes & refetching all 11 tables...');
     const res = await fullCloudSync();
     setSupabaseMessage(res.message);
     setIsSeedingCloud(false);
   };
 
   const copySqlSchema = () => {
-    const textToCopy = selectedSqlTab === 'clean' ? SUPABASE_CLEAN_SCHEMA_SQL : SUPABASE_SEED_SQL;
+    const textToCopy = selectedSqlTab === 'loyalty'
+      ? SUPABASE_LOYALTY_MIGRATION_SQL
+      : selectedSqlTab === 'seed'
+      ? SUPABASE_SEED_SQL
+      : SUPABASE_CLEAN_SCHEMA_SQL;
     navigator.clipboard.writeText(textToCopy);
     setCopiedSchema(true);
     setTimeout(() => setCopiedSchema(false), 3000);
@@ -888,6 +1085,14 @@ export const AdminPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleQuickLogin('owner@tiptopshears.com', 'owner2026!')}
+                  className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
+                >
+                  <span className="font-semibold text-[#1C1221]">🏛️ Salon Owner (Management & Staff Oversight)</span>
+                  <span className="text-[10px] text-[#7B2D97] font-mono">owner@tiptopshears.com</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleQuickLogin('staff.silang@tiptopshears.com', 'staff2026!')}
                   className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
                 >
@@ -969,10 +1174,12 @@ export const AdminPage: React.FC = () => {
                 className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded tracking-wider ${
                   isSuperAdmin
                     ? 'bg-[#7B2D97] text-[#E5A93C] border border-[#E5A93C]/40'
+                    : currentUser?.role === 'owner'
+                    ? 'bg-amber-900/80 text-amber-300 border border-amber-600'
                     : 'bg-emerald-900/80 text-emerald-300 border border-emerald-700'
                 }`}
               >
-                {isSuperAdmin ? 'Super Admin' : 'Staff'}
+                {isSuperAdmin ? 'Super Admin' : currentUser?.role === 'owner' ? 'Salon Owner' : 'Staff'}
               </span>
             </div>
             <div className="text-[11px] text-[#A597B0] flex items-center gap-1 truncate">
@@ -1038,6 +1245,26 @@ export const AdminPage: React.FC = () => {
                       {messages.length}
                     </span>
                   </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('loyalty');
+                    setMobileSidebarOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-all cursor-pointer ${
+                    activeTab === 'loyalty'
+                      ? 'bg-[#7B2D97] text-white font-semibold shadow-sm'
+                      : 'text-[#DDD7E3] hover:bg-[#211627] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Award className="w-4 h-4 text-[#E5A93C]" />
+                    <span>Loyalty & Rewards</span>
+                  </div>
+                  <span className="bg-[#E5A93C]/20 text-[10px] font-mono px-2 py-0.5 rounded text-[#E5A93C] border border-[#E5A93C]/40">
+                    {users.reduce((acc, u) => acc + (u.loyaltyPoints || 0), 0).toLocaleString()} pts
+                  </span>
                 </button>
               </div>
             </div>
@@ -1146,11 +1373,11 @@ export const AdminPage: React.FC = () => {
               </button>
             </div>
 
-            {/* GROUP 4: ADMINISTRATION (SUPER ADMIN ONLY) */}
-            {isSuperAdmin && (
+            {/* GROUP 4: ADMINISTRATION (SUPER ADMIN & OWNER) */}
+            {(isSuperAdmin || isOwner) && (
               <div>
                 <div className="text-[10px] uppercase font-bold tracking-widest text-[#E5A93C] px-3 mb-2 flex items-center gap-1">
-                  <span>👑 System Admin</span>
+                  <span>{isSuperAdmin ? '👑 System Admin' : '🏛️ Store Administration'}</span>
                 </div>
                 <div className="space-y-1">
                   <button
@@ -1320,16 +1547,6 @@ export const AdminPage: React.FC = () => {
                 <span>Add Branch</span>
               </button>
             )}
-
-            {activeTab === 'users' && isSuperAdmin && (
-              <button
-                onClick={openNewUserModal}
-                className="px-4 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow flex items-center gap-2 cursor-pointer transition-colors"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>Create User</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -1391,7 +1608,10 @@ export const AdminPage: React.FC = () => {
                       <th className="p-4">Guest Details</th>
                       <th className="p-4">Service</th>
                       <th className="p-4">Date & Time</th>
-                      <th className="p-4">Specialist</th>
+                      <th className="p-4">
+                        <div>Assigned Staff / Specialist</div>
+                        <div className="text-[10px] font-normal text-[#8A7E93] capitalize tracking-normal">Tag who did service</div>
+                      </th>
                       <th className="p-4">Status</th>
                       <th className="p-4 text-right">Actions</th>
                     </tr>
@@ -1428,14 +1648,47 @@ export const AdminPage: React.FC = () => {
                           </td>
                           <td className="p-4">
                             <span className="font-medium text-[#1C1221] block">{bk.serviceTitle}</span>
-                            <span className="text-[11px] font-mono text-[#7B2D97]">₱{bk.totalPrice.toLocaleString()}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <span className="text-[11px] font-mono text-[#7B2D97] font-semibold">₱{bk.totalPrice.toLocaleString()}</span>
+                              {bk.appliedPromo === 'welcome_20' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded font-semibold" title="20% Welcome First-Visit Discount Applied">
+                                  <Gift className="w-3 h-3 text-[#B87D1B]" />
+                                  <span>20% Welcome Off</span>
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-4 text-[#6B6175]">
                             <span className="font-semibold block text-[#1C1221]">{bk.appointmentDate}</span>
                             <span className="text-[11px]">{bk.appointmentTime}</span>
                           </td>
-                          <td className="p-4 text-[#6B6175]">
-                            {bk.stylist.split('(')[0]}
+                          <td className="p-4">
+                            <div className="flex items-center gap-1.5 min-w-[160px]">
+                              <User className="w-3.5 h-3.5 text-[#7B2D97] shrink-0" />
+                              <select
+                                value={bk.stylist}
+                                onChange={(e) => updateBooking(bk.id, { stylist: e.target.value })}
+                                className="bg-[#FAFAFB] hover:bg-white border border-[#D9D6E2] text-xs rounded px-2 py-1 text-[#1C1221] font-medium focus:outline-none focus:ring-1 focus:ring-[#7B2D97] cursor-pointer w-full"
+                                title="Tag employee/staff member who performed or is assigned this treatment"
+                              >
+                                <option value="Assigned Atelier Specialist">Unassigned Specialist</option>
+                                <optgroup label="Salon Staff & Concierge">
+                                  {users
+                                    .filter((u) => u.role === 'staff' || u.role === 'owner' || u.role === 'super_admin')
+                                    .map((s) => (
+                                      <option key={s.id} value={s.fullName}>
+                                        {s.fullName} {s.role === 'super_admin' ? '(Executive)' : s.role === 'owner' ? '(Owner)' : '(Staff)'}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                                <optgroup label="Senior Specialists">
+                                  <option value="Master Stylist Claire">Master Stylist Claire</option>
+                                  <option value="Artisan Nailist Vivienne">Artisan Nailist Vivienne</option>
+                                  <option value="Spa Specialist Maya">Spa Specialist Maya</option>
+                                  <option value="Senior Colorist Kenji">Senior Colorist Kenji</option>
+                                </optgroup>
+                              </select>
+                            </div>
                           </td>
                           <td className="p-4">
                             <span
@@ -1453,16 +1706,34 @@ export const AdminPage: React.FC = () => {
                             </span>
                           </td>
                           <td className="p-4 text-right">
-                            <select
-                              value={bk.status}
-                              onChange={(e) => updateBookingStatus(bk.id, e.target.value as any)}
-                              className="bg-[#FAFAFB] border border-[#D9D6E2] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#7B2D97] cursor-pointer"
-                            >
-                              <option value="pending">Mark Pending</option>
-                              <option value="confirmed">Confirm Slot</option>
-                              <option value="completed">Complete Visit</option>
-                              <option value="cancelled">Cancel</option>
-                            </select>
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {bk.pointsDelivered ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded" title="Loyalty points delivered to user">
+                                  <Sparkles className="w-3 h-3 text-[#E5A93C]" />
+                                  <span>+{bk.loyaltyPointsAwarded || Math.round(bk.totalPrice * 0.1)} pts</span>
+                                </span>
+                              ) : bk.status === 'confirmed' ? (
+                                <button
+                                  onClick={() => awardBookingLoyaltyPoints(bk.id)}
+                                  className="text-[10px] bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] font-semibold px-2 py-1 rounded shadow-sm inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Complete appointment & credit loyalty points directly to customer"
+                                >
+                                  <Award className="w-3 h-3 text-[#E5A93C]" />
+                                  <span>Complete & Award Pts</span>
+                                </button>
+                              ) : null}
+
+                              <select
+                                value={bk.status}
+                                onChange={(e) => updateBookingStatus(bk.id, e.target.value as any)}
+                                className="bg-[#FAFAFB] border border-[#D9D6E2] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#7B2D97] cursor-pointer"
+                              >
+                                <option value="pending">Mark Pending</option>
+                                <option value="confirmed">Confirm Slot</option>
+                                <option value="completed">Complete & Deliver Pts</option>
+                                <option value="cancelled">Cancel</option>
+                              </select>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1739,8 +2010,487 @@ export const AdminPage: React.FC = () => {
           )}
 
           {/* ========================================================= */}
-          {/* TAB: SERVICES MANAGER */}
+          {/* TAB: LOYALTY & REWARDS PROGRAM (STORE OWNER & MOBILE APP) */}
           {/* ========================================================= */}
+          {activeTab === 'loyalty' && (
+            <div className="space-y-6">
+              {/* Feedback Alert */}
+              {loyaltyFeedbackMsg && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-sm animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span className="font-medium">{loyaltyFeedbackMsg}</span>
+                  </div>
+                  <button onClick={() => setLoyaltyFeedbackMsg(null)} className="text-emerald-700 hover:text-emerald-900 cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* KPI Header Stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-xl border border-[#ECEBF0] shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] block">
+                      Total Points in Circulation
+                    </span>
+                    <span className="text-2xl font-serif font-bold text-[#7B2D97] mt-1 block">
+                      {users.reduce((acc, u) => acc + (u.loyaltyPoints || 0), 0).toLocaleString()} pts
+                    </span>
+                    <span className="text-[11px] text-[#6B6175] mt-0.5 block">
+                      ≈ ₱{users.reduce((acc, u) => acc + (u.loyaltyPoints || 0), 0).toLocaleString()} Peso Value (1:1 Rate)
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-[#FAF5FE] border border-[#E9D9F2] flex items-center justify-center text-[#7B2D97]">
+                    <Coins className="w-6 h-6 text-[#E5A93C]" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-[#ECEBF0] shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] block">
+                      Registered App Members
+                    </span>
+                    <span className="text-2xl font-serif font-bold text-[#1C1221] mt-1 block">
+                      {users.filter(u => u.role === 'customer').length} Members
+                    </span>
+                    <span className="text-[11px] text-[#6B6175] mt-0.5 block">
+                      {users.filter(u => (u.loyaltyPoints || 0) > 0).length} with active balances
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-[#FAF5FE] border border-[#E9D9F2] flex items-center justify-center text-[#7B2D97]">
+                    <Users className="w-6 h-6 text-[#7B2D97]" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-[#ECEBF0] shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] block">
+                      Active Claimable Rewards
+                    </span>
+                    <span className="text-2xl font-serif font-bold text-[#1C1221] mt-1 block">
+                      {loyaltyRewards.filter(r => r.isActive).length} Privileges
+                    </span>
+                    <span className="text-[11px] text-[#6B6175] mt-0.5 block">
+                      Services & discount vouchers
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
+                    <Gift className="w-6 h-6 text-[#E5A93C]" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-[#ECEBF0] shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#7C6C87] block">
+                      Loyalty Ledger Entries
+                    </span>
+                    <span className="text-2xl font-serif font-bold text-[#1C1221] mt-1 block">
+                      {loyaltyLogs.length} Events
+                    </span>
+                    <span className="text-[11px] text-[#6B6175] mt-0.5 block">
+                      Full audit & disbursements
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-center text-[#7B2D97]">
+                    <History className="w-6 h-6 text-[#7B2D97]" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Sub-tab Navigation */}
+              <div className="flex items-center justify-between flex-wrap gap-4 bg-white p-3.5 rounded-xl border border-[#ECEBF0] shadow-sm">
+                <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                  <button
+                    onClick={() => setSelectedLoyaltySubTab('users')}
+                    className={`px-3.5 py-1.5 rounded-lg font-semibold cursor-pointer transition-all ${
+                      selectedLoyaltySubTab === 'users'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    👤 Customer Accounts & Balances ({users.filter(u => u.role === 'customer').length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedLoyaltySubTab('ledger')}
+                    className={`px-3.5 py-1.5 rounded-lg font-semibold cursor-pointer transition-all ${
+                      selectedLoyaltySubTab === 'ledger'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    📜 Points History & Ledger ({loyaltyLogs.length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedLoyaltySubTab('rewards')}
+                    className={`px-3.5 py-1.5 rounded-lg font-semibold cursor-pointer transition-all ${
+                      selectedLoyaltySubTab === 'rewards'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    🎁 Claimable Rewards Catalog ({loyaltyRewards.length})
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedLoyaltySubTab === 'users' && (
+                    <button
+                      onClick={() => setIsAddCustomerModalOpen(true)}
+                      className="px-3.5 py-1.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs font-semibold rounded shadow inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Register Customer Account</span>
+                    </button>
+                  )}
+
+                  {selectedLoyaltySubTab === 'rewards' && (
+                    <button
+                      onClick={openNewRewardModal}
+                      className="px-3.5 py-1.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs font-semibold rounded shadow inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Create Reward Item</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* ======================================================= */}
+              {/* SUBTAB 1: CUSTOMERS & POINTS BALANCES */}
+              {/* ======================================================= */}
+              {selectedLoyaltySubTab === 'users' && (
+                <div className="space-y-4">
+                  {/* Search Toolbar */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-[#ECEBF0] shadow-sm">
+                    <div className="relative flex-1 max-w-md">
+                      <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#A597B0]" />
+                      <input
+                        type="text"
+                        placeholder="Search customer by name, email, or phone..."
+                        value={loyaltySearchQuery}
+                        onChange={(e) => setLoyaltySearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-[#FAFAFB] border border-[#D9D6E2] rounded-lg text-xs text-[#1C1221] focus:outline-none focus:ring-1 focus:ring-[#7B2D97]"
+                      />
+                    </div>
+                    <div className="text-xs text-[#6B6175] font-medium">
+                      Total Customers: <strong className="text-[#1C1221]">{users.filter(u => u.role === 'customer').length}</strong>
+                    </div>
+                  </div>
+
+                  {/* Customer Accounts Table */}
+                  <div className="bg-white rounded-xl border border-[#ECEBF0] overflow-x-auto shadow-sm">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#FAFAFB] border-b border-[#ECEBF0] text-[#6B6175] uppercase tracking-wider font-semibold">
+                        <tr>
+                          <th className="p-4">Customer Details</th>
+                          <th className="p-4">Current Points & Value</th>
+                          <th className="p-4">Loyalty Tier</th>
+                          <th className="p-4">First-Visit 20% Off Promo</th>
+                          <th className="p-4">Completed Visits & Total Spent</th>
+                          <th className="p-4 text-right">Store Owner Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#ECEBF0]">
+                        {users
+                          // STRICTLY FILTER CUSTOMERS ONLY (NO STAFF OR ADMINS)
+                          .filter((u) => u.role === 'customer')
+                          // SEARCH QUERY FILTER
+                          .filter((u) => {
+                            const q = loyaltySearchQuery.toLowerCase().trim();
+                            if (!q) return true;
+                            return (
+                              u.fullName.toLowerCase().includes(q) ||
+                              u.email.toLowerCase().includes(q) ||
+                              (u.phone && u.phone.toLowerCase().includes(q))
+                            );
+                          })
+                          .map((u) => {
+                            const points = u.loyaltyPoints || 0;
+                            const tier = u.loyaltyTier || 'bronze';
+                            const userBookings = bookings.filter(
+                              (b) =>
+                                (b.linkedUserId && b.linkedUserId === u.id) ||
+                                (b.customerEmail && b.customerEmail.toLowerCase() === u.email.toLowerCase())
+                            );
+
+                            return (
+                              <tr key={u.id} className="hover:bg-[#FAFAFB] transition-colors">
+                                {/* Customer Info */}
+                                <td className="p-4">
+                                  <div className="font-semibold text-[#1C1221] text-sm">{u.fullName}</div>
+                                  <div className="text-[11px] text-[#6B6175] font-mono">{u.email}</div>
+                                  {u.phone && <div className="text-[11px] text-[#8A7E93]">{u.phone}</div>}
+                                </td>
+
+                                {/* Points Balance & PHP value */}
+                                <td className="p-4">
+                                  <div className="flex items-center gap-1.5 font-bold font-mono text-base text-[#7B2D97]">
+                                    <Sparkles className="w-4 h-4 text-[#E5A93C]" />
+                                    <span>{points.toLocaleString()} pts</span>
+                                  </div>
+                                  <span className="text-[11px] text-[#6B6175] block mt-0.5 font-medium">
+                                    ₱{points.toLocaleString()} claimable credit
+                                  </span>
+                                </td>
+
+                                {/* Tier */}
+                                <td className="p-4">
+                                  <span
+                                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                      tier === 'atelier_vip'
+                                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                        : tier === 'gold'
+                                        ? 'bg-yellow-100 text-yellow-900 border border-yellow-300'
+                                        : tier === 'silver'
+                                        ? 'bg-slate-100 text-slate-800 border border-slate-300'
+                                        : 'bg-zinc-100 text-zinc-700 border border-zinc-200'
+                                    }`}
+                                  >
+                                    {tier === 'atelier_vip' ? '👑 Atelier VIP' : tier === 'gold' ? '✦ Gold' : tier === 'silver' ? '✦ Silver' : 'Bronze'}
+                                  </span>
+                                </td>
+
+                                {/* First-Visit 20% Off Welcome Promo Status */}
+                                <td className="p-4">
+                                  {u.welcomePromoClaimed ? (
+                                    <div className="space-y-1">
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                        <span>20% Off Claimed</span>
+                                      </span>
+                                      <div className="text-[10px] text-[#8A7E93]">
+                                        {u.welcomePromoClaimedAt ? new Date(u.welcomePromoClaimedAt).toLocaleDateString() : 'Previously used'}
+                                      </div>
+                                      <button
+                                        onClick={() => handleResetWelcomePromo(u)}
+                                        className="text-[10px] text-[#8A7E93] hover:text-[#1C1221] underline cursor-pointer block"
+                                        title="Reset promo eligibility so customer can claim again"
+                                      >
+                                        Reset Promo
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                                        <Gift className="w-3 h-3 text-[#B87D1B]" />
+                                        <span>Eligible / Unclaimed</span>
+                                      </span>
+                                      <button
+                                        onClick={() => handleClaimWelcomePromo(u)}
+                                        className="px-2.5 py-1 bg-[#FAF5FE] hover:bg-[#7B2D97] text-[#7B2D97] hover:text-white border border-[#E9D9F2] rounded text-[10px] font-semibold cursor-pointer transition-colors block shadow-2xs"
+                                        title="Customer presented welcome discount banner at payment counter. Tag as claimed."
+                                      >
+                                        Tag Claimed at Counter
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* Visits & Spend */}
+                                <td className="p-4 text-[#1C1221]">
+                                  <div className="font-mono font-semibold">
+                                    {u.totalVisits || userBookings.filter(b => b.status === 'completed').length} visits
+                                  </div>
+                                  <div className="font-mono text-[11px] text-[#6B6175] mt-0.5">
+                                    ₱{(u.totalSpent || userBookings.filter(b => b.status === 'completed').reduce((acc, b) => acc + b.totalPrice, 0)).toLocaleString()} spend
+                                  </div>
+                                </td>
+
+                                {/* Actions */}
+                                <td className="p-4 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => openAdjustPointsModal(u)}
+                                      className="px-3 py-1.5 bg-[#FAF5FE] hover:bg-[#7B2D97] text-[#7B2D97] hover:text-white border border-[#E9D9F2] rounded text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-1"
+                                      title="Adjust points or rectify balance"
+                                    >
+                                      <Coins className="w-3.5 h-3.5 text-[#E5A93C]" />
+                                      <span>Adjust Points</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================= */}
+              {/* SUBTAB 2: POINTS HISTORY & AUDIT LEDGER */}
+              {/* ======================================================= */}
+              {selectedLoyaltySubTab === 'ledger' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-[#FAF9FC] border border-[#ECEBF0] rounded-xl flex items-start gap-3 text-xs text-[#6B6175]">
+                    <ShieldCheck className="w-4 h-4 text-[#7B2D97] shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-[#1C1221]">Tamper-Evident Loyalty Ledger</div>
+                      <p className="leading-relaxed">
+                        Every point earned upon booking completion, manual Store Owner rectification, or reward claiming is permanently recorded in your Supabase <code>public.loyalty_logs</code> table with audit performer and resulting balance.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-[#ECEBF0] overflow-x-auto shadow-sm">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#FAFAFB] border-b border-[#ECEBF0] text-[#6B6175] uppercase tracking-wider font-semibold">
+                        <tr>
+                          <th className="p-4">Timestamp</th>
+                          <th className="p-4">Customer</th>
+                          <th className="p-4">Event Type</th>
+                          <th className="p-4">Points Delta</th>
+                          <th className="p-4">Balance After</th>
+                          <th className="p-4">Reason / Notes</th>
+                          <th className="p-4">Logged By</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#ECEBF0]">
+                        {loyaltyLogs.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="p-8 text-center text-xs text-[#6B6175]">
+                              No loyalty transactions recorded yet. Complete an appointment or make a points adjustment to view logs.
+                            </td>
+                          </tr>
+                        ) : (
+                          loyaltyLogs.map((log) => {
+                            const dateFormatted = new Date(log.createdAt).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            });
+                            const isPositive = log.pointsDelta > 0;
+
+                            return (
+                              <tr key={log.id} className="hover:bg-[#FAFAFB] transition-colors">
+                                <td className="p-4 whitespace-nowrap text-[#6B6175] font-mono text-[11px]">
+                                  {dateFormatted}
+                                </td>
+                                <td className="p-4">
+                                  <div className="font-semibold text-[#1C1221]">{log.userName}</div>
+                                  <div className="text-[11px] text-[#6B6175] font-mono">{log.userEmail}</div>
+                                </td>
+                                <td className="p-4">
+                                  <span
+                                    className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                      log.type === 'booking_completed'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : log.type === 'reward_redemption'
+                                        ? 'bg-purple-100 text-purple-800'
+                                        : 'bg-blue-100 text-blue-800'
+                                    }`}
+                                  >
+                                    {log.type.replace('_', ' ')}
+                                  </span>
+                                </td>
+                                <td className="p-4">
+                                  <div
+                                    className={`inline-flex items-center gap-1 font-bold font-mono text-xs ${
+                                      isPositive ? 'text-emerald-700' : 'text-red-600'
+                                    }`}
+                                  >
+                                    {isPositive ? (
+                                      <ArrowUpRight className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <ArrowDownRight className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>{isPositive ? `+${log.pointsDelta}` : log.pointsDelta} pts</span>
+                                  </div>
+                                </td>
+                                <td className="p-4 font-mono font-semibold text-[#1C1221]">
+                                  {log.balanceAfter.toLocaleString()} pts
+                                </td>
+                                <td className="p-4 max-w-sm text-[#4A3D54]">
+                                  {log.reason}
+                                </td>
+                                <td className="p-4 text-[#6B6175] font-mono text-[11px]">
+                                  {log.performedBy}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================= */}
+              {/* SUBTAB 3: CLAIMABLE REWARDS CATALOG */}
+              {/* ======================================================= */}
+              {selectedLoyaltySubTab === 'rewards' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {loyaltyRewards.map((reward) => (
+                      <div
+                        key={reward.id}
+                        className={`bg-white rounded-xl border p-5 shadow-sm space-y-4 flex flex-col justify-between ${
+                          reward.isActive ? 'border-[#ECEBF0]' : 'border-zinc-200 opacity-60'
+                        }`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] uppercase font-bold tracking-widest text-[#7B2D97] bg-[#FAF5FE] px-2.5 py-0.5 rounded border border-[#E9D9F2]">
+                              {reward.category}
+                            </span>
+                            {reward.badgeText && (
+                              <span className="text-[10px] uppercase font-bold tracking-widest text-[#E5A93C] bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                {reward.badgeText}
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-serif text-lg font-medium text-[#1C1221]">
+                            {reward.title}
+                          </h4>
+                          <p className="text-xs text-[#6B6175] leading-relaxed">
+                            {reward.description}
+                          </p>
+                        </div>
+
+                        <div className="pt-3 border-t border-[#ECEBF0] flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-bold text-[#7B2D97] flex items-center gap-1 font-mono">
+                              <Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />
+                              <span>{reward.pointsCost} Points</span>
+                            </div>
+                            <span className="text-[10px] text-[#8A7E93]">
+                              Worth ₱{reward.pesoEquivalentValue.toLocaleString()} in atelier services
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEditRewardModal(reward)}
+                              className="p-1.5 text-[#7B2D97] hover:bg-[#FAF5FE] rounded cursor-pointer transition-colors"
+                              title="Edit reward privilege"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Delete reward privilege '${reward.title}'?`)) {
+                                  deleteLoyaltyReward(reward.id);
+                                }
+                              }}
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded cursor-pointer transition-colors"
+                              title="Delete reward"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {activeTab === 'services' && (
             <div className="space-y-4">
               <div className="bg-white rounded-xl border border-[#ECEBF0] overflow-x-auto shadow-sm">
@@ -2225,17 +2975,50 @@ export const AdminPage: React.FC = () => {
           )}
 
           {/* ========================================================= */}
-          {/* TAB: USER ACCOUNTS (SUPER ADMIN ONLY) */}
+          {/* TAB: USER ACCOUNTS (SUPER ADMIN & SALON OWNER) */}
           {/* ========================================================= */}
-          {activeTab === 'users' && isSuperAdmin && (
+          {activeTab === 'users' && (isSuperAdmin || isOwner) && (
             <div className="space-y-4">
               {/* Users Toolbar */}
-              <div className="flex items-center justify-between flex-wrap gap-4 bg-white p-3.5 rounded-xl border border-[#ECEBF0]">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-[#1C1221]">Total Profiles: {users.length}</span>
-                  <span className="text-[11px] text-[#8A7E93]">
-                    ({users.filter(u => u.role === 'super_admin').length} Super Admins, {users.filter(u => u.role === 'staff').length} Staff, {users.filter(u => u.role === 'customer').length} Customers)
-                  </span>
+              <div className="flex items-center justify-between flex-wrap gap-4 bg-white p-3.5 rounded-xl border border-[#ECEBF0] shadow-xs">
+                {/* User Type Segmentation Tabs */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => setUserRoleFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      userRoleFilter === 'all'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    All Accounts ({users.length})
+                  </button>
+                  <button
+                    onClick={() => setUserRoleFilter('store_team')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 ${
+                      userRoleFilter === 'store_team'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    <span>💻 Salon Team & Staff</span>
+                    <span className="text-[10px] opacity-80">
+                      ({users.filter(u => u.role !== 'customer').length})
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setUserRoleFilter('customer')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 ${
+                      userRoleFilter === 'customer'
+                        ? 'bg-[#7B2D97] text-white shadow-xs'
+                        : 'bg-[#FAFAFB] text-[#6B6175] hover:bg-[#F2EFF6] hover:text-[#1C1221] border border-[#ECEBF0]'
+                    }`}
+                  >
+                    <span>📱 App Customers</span>
+                    <span className="text-[10px] opacity-80">
+                      ({users.filter(u => u.role === 'customer').length})
+                    </span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -2244,20 +3027,26 @@ export const AdminPage: React.FC = () => {
                     className="px-3.5 py-1.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow flex items-center gap-1.5 cursor-pointer transition-colors"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    <span>Add New User</span>
+                    <span>Create User</span>
                   </button>
                 </div>
               </div>
 
-              {/* Explanatory Info Card */}
-              <div className="p-3.5 bg-[#FAF9FC] border border-[#ECEBF0] rounded-xl flex items-start gap-3 text-xs text-[#6B6175]">
+              {/* Explanatory Info Card: Role Hierarchy */}
+              <div className="p-4 bg-[#FAF9FC] border border-[#ECEBF0] rounded-xl flex items-start gap-3 text-xs text-[#6B6175]">
                 <ShieldCheck className="w-4 h-4 text-[#7B2D97] shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <div className="font-semibold text-[#1C1221]">
-                    Unified User Management (`public.app_users` table)
+                    Role Access & Management Hierarchy
                   </div>
                   <p className="leading-relaxed">
-                    All user roles (<strong>Super Admin</strong>, <strong>Branch Staff</strong>, and <strong>Customer</strong>) are stored in your Supabase <code>public.app_users</code> table. When users register in <strong>Supabase Dashboard &gt; Authentication &gt; Users</strong>, our database trigger automatically syncs them here. You can click the <strong>Edit</strong> icon on any user to change their role, assign their branch, or update details.
+                    • <strong>Super Admin:</strong> Full global oversight across all branches and tabs. Only Super Admins can add or assign new <strong>Salon Owners</strong>.
+                  </p>
+                  <p className="leading-relaxed">
+                    • <strong>Salon Owner:</strong> Back-office management and store operations. Owners can create and manage <strong>Branch Staff</strong> and <strong>Customer</strong> accounts.
+                  </p>
+                  <p className="leading-relaxed">
+                    • <strong>Customer:</strong> Registered mobile application users who book appointments, accumulate loyalty points, and redeem privileges.
                   </p>
                 </div>
               </div>
@@ -2270,78 +3059,119 @@ export const AdminPage: React.FC = () => {
                       <th className="p-4">Assigned Role</th>
                       <th className="p-4">Assigned Branch</th>
                       <th className="p-4">Contact Phone</th>
+                      <th className="p-4">Loyalty Balance</th>
                       <th className="p-4">Status</th>
                       <th className="p-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#ECEBF0]">
-                    {users.map((u) => {
-                      const assignedBranch = branches.find((b) => b.id === u.branchId);
-                      return (
-                        <tr key={u.id} className="hover:bg-[#FAFAFB] transition-colors">
-                          <td className="p-4">
-                            <span className="font-semibold block text-[#1C1221]">{u.fullName}</span>
-                            <span className="text-[11px] text-[#6B6175] font-mono">{u.email}</span>
-                          </td>
-                          <td className="p-4">
-                            <span
-                              className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                u.role === 'super_admin'
-                                  ? 'bg-purple-100 text-purple-800'
-                                  : u.role === 'staff'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-emerald-100 text-emerald-800'
-                              }`}
-                            >
-                              {u.role === 'super_admin' ? '👑 Super Admin' : u.role === 'staff' ? '✂️ Branch Staff' : '📱 Customer'}
-                            </span>
-                          </td>
-                          <td className="p-4 text-[#6B6175]">
-                            {u.branchId === 'all' || !u.branchId ? (
-                              <span className="text-[11px] text-[#7B2D97] font-semibold">All Branches (Global)</span>
-                            ) : (
-                              <span>{assignedBranch?.name || u.branchId}</span>
-                            )}
-                          </td>
-                          <td className="p-4 text-[#6B6175]">
-                            {u.phone || '—'}
-                          </td>
-                          <td className="p-4">
-                            <span
-                              className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
-                                u.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
-                              }`}
-                            >
-                              {u.isActive ? 'Active' : 'Disabled'}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right space-x-2">
-                            <button
-                              onClick={() => openEditUserModal(u)}
-                              className="p-1.5 hover:bg-[#F0EEF5] text-[#7B2D97] rounded cursor-pointer transition-colors"
-                              title="Edit User"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            {u.email !== 'admin@tiptopshears.com' && (
-                              <button
-                                onClick={() =>
-                                  setDeleteConfirmTarget({
-                                    type: 'user',
-                                    id: u.id,
-                                    title: u.fullName
-                                  })
-                                }
-                                className="p-1.5 hover:bg-red-50 text-red-600 rounded cursor-pointer transition-colors"
-                                title="Delete User"
+                    {users
+                      .filter((u) => {
+                        if (userRoleFilter === 'store_team') {
+                          return u.role !== 'customer';
+                        }
+                        if (userRoleFilter === 'customer') {
+                          return u.role === 'customer';
+                        }
+                        return true;
+                      })
+                      .map((u) => {
+                        const assignedBranch = branches.find((b) => b.id === u.branchId);
+                        const canModify = isSuperAdmin || (u.role === 'staff' || u.role === 'customer');
+
+                        return (
+                          <tr key={u.id} className="hover:bg-[#FAFAFB] transition-colors">
+                            <td className="p-4">
+                              <span className="font-semibold block text-[#1C1221]">{u.fullName}</span>
+                              <span className="text-[11px] text-[#6B6175] font-mono">{u.email}</span>
+                            </td>
+                            <td className="p-4">
+                              <span
+                                className={`inline-block px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                  u.role === 'super_admin'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : u.role === 'owner'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : u.role === 'staff'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                {u.role === 'super_admin'
+                                  ? '👑 Super Admin'
+                                  : u.role === 'owner'
+                                  ? '💎 Salon Owner'
+                                  : u.role === 'staff'
+                                  ? '✂️ Branch Staff'
+                                  : '📱 Customer'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-[#6B6175]">
+                              {u.branchId === 'all' || !u.branchId ? (
+                                <span className="text-[11px] text-[#7B2D97] font-semibold">All Branches (Global)</span>
+                              ) : (
+                                <span>{assignedBranch?.name || u.branchId}</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-[#6B6175]">
+                              {u.phone || '—'}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-1.5 font-bold font-mono text-xs text-[#7B2D97]">
+                                <Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />
+                                <span>{(u.loyaltyPoints || 0).toLocaleString()} pts</span>
+                              </div>
+                              <button
+                                onClick={() => openAdjustPointsModal(u)}
+                                className="text-[10px] text-[#7B2D97] hover:underline block mt-0.5 font-medium cursor-pointer"
+                              >
+                                Adjust
                               </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            </td>
+                            <td className="p-4">
+                              <span
+                                className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                                  u.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                                }`}
+                              >
+                                {u.isActive ? 'Active' : 'Disabled'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right space-x-2">
+                              {canModify ? (
+                                <>
+                                  <button
+                                    onClick={() => openEditUserModal(u)}
+                                    className="p-1.5 hover:bg-[#F0EEF5] text-[#7B2D97] rounded cursor-pointer transition-colors"
+                                    title="Edit User"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  {u.email !== 'admin@tiptopshears.com' && (
+                                    <button
+                                      onClick={() =>
+                                        setDeleteConfirmTarget({
+                                          type: 'user',
+                                          id: u.id,
+                                          title: u.fullName
+                                        })
+                                      }
+                                      className="p-1.5 hover:bg-red-50 text-red-600 rounded cursor-pointer transition-colors"
+                                      title="Delete User"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-[10px] text-[#8A7E93] italic" title="Only Super Admin can modify Owner accounts">
+                                  Super Admin Only
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
@@ -2349,9 +3179,9 @@ export const AdminPage: React.FC = () => {
           )}
 
           {/* ========================================================= */}
-          {/* TAB: SUPABASE SYNC (SUPER ADMIN ONLY) */}
+          {/* TAB: SUPABASE SYNC (SUPER ADMIN & SALON OWNER) */}
           {/* ========================================================= */}
-          {activeTab === 'supabase' && isSuperAdmin && (
+          {activeTab === 'supabase' && (isSuperAdmin || isOwner) && (
             <div className="space-y-6">
               <div className="bg-white rounded-xl border border-[#ECEBF0] p-6 sm:p-8 space-y-6 shadow-sm">
                 <div className="flex items-center justify-between flex-wrap gap-4">
@@ -2361,7 +3191,7 @@ export const AdminPage: React.FC = () => {
                         Supabase Cloud Database & Auth Architecture
                       </h3>
                       <span className="bg-[#7B2D97] text-[#E5A93C] text-[10px] uppercase font-bold px-2 py-0.5 rounded">
-                        Super Admin Only
+                        {isSuperAdmin ? 'Super Admin' : 'Salon Owner'}
                       </span>
                     </div>
                     <p className="text-xs text-[#6B6175] mt-1">
@@ -2407,7 +3237,7 @@ export const AdminPage: React.FC = () => {
 
                 {/* Cloud Live Data Counters (When Connected) */}
                 {supabaseConnected && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 p-4 bg-[#FAF8FC] border border-[#E8E2EE] rounded-xl">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3 p-4 bg-[#FAF8FC] border border-[#E8E2EE] rounded-xl">
                     <div className="text-center p-2">
                       <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Branches</div>
                       <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{branches.length}</div>
@@ -2429,12 +3259,20 @@ export const AdminPage: React.FC = () => {
                       <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{bookings.length}</div>
                     </div>
                     <div className="text-center p-2">
-                      <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Gallery</div>
-                      <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{gallery.length}</div>
+                      <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Users</div>
+                      <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{users.length}</div>
                     </div>
                     <div className="text-center p-2">
                       <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Inquiries</div>
                       <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{messages.length}</div>
+                    </div>
+                    <div className="text-center p-2">
+                      <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Rewards</div>
+                      <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{loyaltyRewards.length}</div>
+                    </div>
+                    <div className="text-center p-2">
+                      <div className="text-xs text-[#6B6175] uppercase tracking-wider font-semibold">Ledger</div>
+                      <div className="text-xl font-serif font-bold text-[#7B2D97] mt-0.5">{loyaltyLogs.length}</div>
                     </div>
                   </div>
                 )}
@@ -2477,7 +3315,7 @@ export const AdminPage: React.FC = () => {
                       title="Pushes all offline changes across all 9 tables to Supabase, then refetches latest fresh cloud state"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />
-                      <span>{isSeedingCloud ? 'Synchronizing All 9 Tables...' : '🔄 Full Cloud Sync (All 9 Tables)'}</span>
+                      <span>{isSeedingCloud ? 'Synchronizing All 11 Tables...' : '🔄 Full Cloud Sync (All 11 Tables)'}</span>
                     </button>
                   )}
                   <button
@@ -2540,7 +3378,7 @@ export const AdminPage: React.FC = () => {
                               : 'text-[#6B6175] hover:text-[#1C1221]'
                           }`}
                         >
-                          1. Clean Schema (All 9 Tables)
+                          1. Clean Schema (All 11 Tables)
                         </button>
                         <button
                           type="button"
@@ -3734,10 +4572,24 @@ export const AdminPage: React.FC = () => {
                     onChange={(e) => setUserForm({ ...userForm, role: e.target.value as UserRole })}
                     className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
                   >
-                    <option value="staff">✂️ Branch Staff</option>
-                    <option value="customer">📱 Mobile / Customer</option>
-                    <option value="super_admin">👑 Super Admin</option>
+                    {isSuperAdmin && (
+                      <optgroup label="👑 Super Admin & Executive">
+                        <option value="super_admin">👑 Super Admin (Full Global Control)</option>
+                        <option value="owner">💎 Salon Owner (Store Panel Management)</option>
+                      </optgroup>
+                    )}
+                    <optgroup label="✂️ Store Staff & Concierge">
+                      <option value="staff">✂️ Branch Staff (Concierge & Desk)</option>
+                    </optgroup>
+                    <optgroup label="📱 Customers & Loyalty Members">
+                      <option value="customer">👤 Customer (Mobile App User Account)</option>
+                    </optgroup>
                   </select>
+                  {!isSuperAdmin && (
+                    <span className="text-[10px] text-[#8A7E93] mt-1 block">
+                      Note: Store Owners can assign Branch Staff and Customer roles. Only Super Admins can add new Store Owners.
+                    </span>
+                  )}
                 </div>
 
                 <div>
@@ -4283,6 +5135,39 @@ export const AdminPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Assigned Staff / Specialist */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-[#7B2D97]" />
+                      <span>Assigned Staff / Specialist (Who did/will do treatment)</span>
+                    </span>
+                    <span className="text-[10px] text-[#8A7E93]">Tag salon employee</span>
+                  </label>
+                  <select
+                    value={customerBookingForm.stylist}
+                    onChange={(e) => setCustomerBookingForm({ ...customerBookingForm, stylist: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                  >
+                    <option value="Assigned Atelier Specialist">Unassigned / Next Available Specialist</option>
+                    <optgroup label="Salon Staff & Concierge">
+                      {users
+                        .filter((u) => u.role === 'staff' || u.role === 'owner' || u.role === 'super_admin')
+                        .map((s) => (
+                          <option key={s.id} value={s.fullName}>
+                            {s.fullName} {s.role === 'super_admin' ? '(Executive)' : s.role === 'owner' ? '(Owner)' : '(Staff)'}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Senior Specialists">
+                      <option value="Master Stylist Claire">Master Stylist Claire</option>
+                      <option value="Artisan Nailist Vivienne">Artisan Nailist Vivienne</option>
+                      <option value="Spa Specialist Maya">Spa Specialist Maya</option>
+                      <option value="Senior Colorist Kenji">Senior Colorist Kenji</option>
+                    </optgroup>
+                  </select>
+                </div>
+
                 {/* Internal Reception Notes */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-[#1C1221] mb-1 flex items-center gap-1.5">
@@ -4517,6 +5402,398 @@ export const AdminPage: React.FC = () => {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ========================================================= */}
+      {/* MODAL 7: LOYALTY POINTS ADJUSTMENT MODAL (STORE OWNER) */}
+      {/* ========================================================= */}
+      {isAdjustModalOpen && selectedAdjustUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
+              <div className="flex items-center gap-2">
+                <Coins className="w-5 h-5 text-[#E5A93C]" />
+                <h3 className="font-serif text-lg font-medium text-[#1C1221]">
+                  Adjust Loyalty Balance
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsAdjustModalOpen(false)}
+                className="text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-[#FAF5FE] p-3.5 rounded-lg border border-[#E9D9F2] space-y-1 text-xs">
+              <div className="font-semibold text-[#1C1221]">
+                Customer: {selectedAdjustUser.fullName}
+              </div>
+              <div className="text-[#6B6175] font-mono">
+                Email: {selectedAdjustUser.email}
+              </div>
+              <div className="text-[#7B2D97] font-bold mt-1">
+                Current Balance: {(selectedAdjustUser.loyaltyPoints || 0).toLocaleString()} pts (≈ ₱{(selectedAdjustUser.loyaltyPoints || 0).toLocaleString()} value)
+              </div>
+            </div>
+
+            <form onSubmit={handleAdjustPointsSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5">
+                  Points Delta (Positive to Add, Negative to Deduct)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step="5"
+                    required
+                    value={adjustPointsDelta}
+                    onChange={(e) => setAdjustPointsDelta(parseInt(e.target.value) || 0)}
+                    className="flex-1 bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-sm font-mono font-bold text-[#1C1221]"
+                  />
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setAdjustPointsDelta(50)}
+                      className="px-2 py-1.5 bg-[#FAF5FE] text-[#7B2D97] border border-[#E9D9F2] rounded text-[10px] font-semibold cursor-pointer"
+                    >
+                      +50
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdjustPointsDelta(100)}
+                      className="px-2 py-1.5 bg-[#FAF5FE] text-[#7B2D97] border border-[#E9D9F2] rounded text-[10px] font-semibold cursor-pointer"
+                    >
+                      +100
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdjustPointsDelta(-50)}
+                      className="px-2 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded text-[10px] font-semibold cursor-pointer"
+                    >
+                      -50
+                    </button>
+                  </div>
+                </div>
+                <span className="text-[11px] text-[#6B6175] mt-1 block">
+                  New Projected Balance: <strong>{Math.max(0, (selectedAdjustUser.loyaltyPoints || 0) + adjustPointsDelta).toLocaleString()} pts</strong>
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1.5">
+                  Audit Reason (Logged in Ledger)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Courtesy bonus for salon anniversary, service rectification, etc."
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
+                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustModalOpen(false)}
+                  className="px-4 py-2 text-xs uppercase tracking-wider text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAdjust}
+                  className="px-5 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {isSubmittingAdjust ? 'Updating Balance...' : 'Confirm Points Adjustment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 8: LOYALTY REWARD ITEM (CREATE / EDIT) */}
+      {/* ========================================================= */}
+      {isRewardModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
+              <div className="flex items-center gap-2">
+                <Gift className="w-5 h-5 text-[#E5A93C]" />
+                <h3 className="font-serif text-lg font-medium text-[#1C1221]">
+                  {editingRewardItem ? 'Edit Reward Privilege' : 'Create Claimable Reward Item'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsRewardModalOpen(false)}
+                className="text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRewardItem} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                  Reward Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. ₱200 Privilege Service Credit or Haute Glaze Gel Manicure"
+                  value={rewardForm.title}
+                  onChange={(e) => setRewardForm({ ...rewardForm, title: e.target.value })}
+                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                  Description
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Describe treatment or voucher conditions..."
+                  value={rewardForm.description}
+                  onChange={(e) => setRewardForm({ ...rewardForm, description: e.target.value })}
+                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Points Required to Claim
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="10"
+                    value={rewardForm.pointsCost}
+                    onChange={(e) => setRewardForm({ ...rewardForm, pointsCost: parseInt(e.target.value) || 0 })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs font-mono font-bold text-[#7B2D97]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    PHP Peso Equivalent Value
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={rewardForm.pesoEquivalentValue}
+                    onChange={(e) => setRewardForm({ ...rewardForm, pesoEquivalentValue: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs font-mono text-[#1C1221]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Category
+                  </label>
+                  <select
+                    value={rewardForm.category}
+                    onChange={(e) => setRewardForm({ ...rewardForm, category: e.target.value as any })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                  >
+                    <option value="voucher">Privilege Voucher</option>
+                    <option value="hair">Hair Treatment</option>
+                    <option value="nails">Nail Service</option>
+                    <option value="spa">Spa & Scalp</option>
+                    <option value="package">Beauty Package</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Minimum Tier Needed
+                  </label>
+                  <select
+                    value={rewardForm.minTier}
+                    onChange={(e) => setRewardForm({ ...rewardForm, minTier: e.target.value as any })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                  >
+                    <option value="bronze">Bronze (All Members)</option>
+                    <option value="silver">Silver Tier (500+ pts)</option>
+                    <option value="gold">Gold Tier (1,000+ pts)</option>
+                    <option value="atelier_vip">Atelier VIP (2,000+ pts)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                  Badge Tagline (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Flagship Exclusive, Most Popular, VIP Ritual"
+                  value={rewardForm.badgeText}
+                  onChange={(e) => setRewardForm({ ...rewardForm, badgeText: e.target.value })}
+                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="rewardActive"
+                  checked={rewardForm.isActive}
+                  onChange={(e) => setRewardForm({ ...rewardForm, isActive: e.target.checked })}
+                  className="rounded border-[#D9D6E2] text-[#7B2D97] focus:ring-[#7B2D97]"
+                />
+                <label htmlFor="rewardActive" className="text-xs font-medium text-[#1C1221]">
+                  Reward is Active & Claimable by Guests in App
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+                <button
+                  type="button"
+                  onClick={() => setIsRewardModalOpen(false)}
+                  className="px-4 py-2 text-xs uppercase tracking-wider text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors"
+                >
+                  Save Reward
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 9: REGISTER CUSTOMER ACCOUNT (WITH MOBILE TAGGING) */}
+      {/* ========================================================= */}
+      {isAddCustomerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1C1221]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#ECEBF0] pb-3">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-[#7B2D97]" />
+                <h3 className="font-serif text-lg font-medium text-[#1C1221]">
+                  Register Customer Account
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsAddCustomerModalOpen(false)}
+                className="text-[#8A7E93] hover:text-[#1C1221] cursor-pointer p-1 rounded hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomer} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                  Customer Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Maria Clara Santos"
+                  value={newCustomerForm.fullName}
+                  onChange={(e) => setNewCustomerForm({ ...newCustomerForm, fullName: e.target.value })}
+                  className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Email Address <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="maria.santos@gmail.com"
+                    value={newCustomerForm.email}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, email: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Contact Phone
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="+63 917 123 4567"
+                    value={newCustomerForm.phone}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, phone: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221] focus:ring-1 focus:ring-[#7B2D97]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Preferred Branch
+                  </label>
+                  <select
+                    value={newCustomerForm.branchId}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, branchId: e.target.value })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs text-[#1C1221]"
+                  >
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase tracking-wider text-[#1C1221] mb-1">
+                    Welcome Loyalty Points
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={newCustomerForm.initialPoints}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, initialPoints: parseInt(e.target.value) || 0 })}
+                    className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs font-mono font-bold text-[#7B2D97]"
+                  />
+                  <span className="text-[10px] text-[#8A7E93] mt-0.5 block">100 pts = ₱100 reward credit</span>
+                </div>
+              </div>
+
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#ECEBF0]">
+                <button
+                  type="button"
+                  onClick={() => setIsAddCustomerModalOpen(false)}
+                  className="px-4 py-2 text-xs uppercase tracking-wider text-[#8A7E93] hover:text-[#1C1221] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingNewCustomer}
+                  className="px-5 py-2 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded shadow cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {isSubmittingNewCustomer ? 'Registering...' : 'Register Customer'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

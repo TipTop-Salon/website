@@ -10,39 +10,79 @@ export const GalleryPage: React.FC = () => {
   const [selectedPhoto, setSelectedPhoto] = useState<GalleryItem | null>(null);
 
   // Dynamically constructed from Category Manager + any unique tags in portfolio
+  // Empty categories with 0 photos are hidden so they don't eat space
   const categories = useMemo(() => {
-    const list: { id: string; label: string }[] = [{ id: 'all', label: 'All Portfolios' }];
+    const list: { id: string; label: string; count: number }[] = [
+      { id: 'all', label: 'All Portfolios', count: gallery.length }
+    ];
 
-    // Active categories from Category Manager
+    const matchesCategory = (itemCategory: string, slug: string, name?: string, id?: string) => {
+      const ic = (itemCategory || '').trim().toLowerCase();
+      if (!ic) return false;
+      if (ic === slug.toLowerCase()) return true;
+      if (name && ic === name.toLowerCase()) return true;
+      if (id && ic === id.toLowerCase()) return true;
+      return false;
+    };
+
+    const getCount = (slug: string, name?: string, id?: string) => {
+      return gallery.filter((item) => matchesCategory(item.category, slug, name, id)).length;
+    };
+
+    // Active categories from Category Manager - strictly only include if they have at least 1 photo
     salonCategories
       .filter((c) => c.isActive)
       .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
       .forEach((cat) => {
-        list.push({ id: cat.slug, label: cat.name });
+        const count = getCount(cat.slug, cat.name, cat.id);
+        if (count > 0) {
+          list.push({ id: cat.slug, label: cat.name, count });
+        }
       });
 
-    // Also include any unique category slugs in gallery not already in categories
+    // Also include any unique category slugs in gallery not already covered
     gallery.forEach((item) => {
-      const slug = item.category?.toLowerCase() || '';
-      if (slug && slug !== 'all' && !list.some((c) => c.id.toLowerCase() === slug)) {
-        list.push({
-          id: item.category,
-          label: item.category.charAt(0).toUpperCase() + item.category.slice(1).replace(/-/g, ' ')
-        });
+      const slug = item.category?.trim().toLowerCase() || '';
+      if (slug && slug !== 'all' && !list.some((c) => c.id.toLowerCase() === slug || c.label.toLowerCase() === slug)) {
+        const count = getCount(slug);
+        if (count > 0) {
+          list.push({
+            id: item.category,
+            label: item.category.charAt(0).toUpperCase() + item.category.slice(1).replace(/-/g, ' '),
+            count
+          });
+        }
       }
     });
 
     return list;
   }, [salonCategories, gallery]);
 
+  // If the activeCategory becomes empty or doesn't exist, safely reset to 'all'
+  const effectiveActiveCategory = useMemo(() => {
+    if (activeCategory === 'all') return 'all';
+    const exists = categories.some((c) => c.id.toLowerCase() === activeCategory.toLowerCase());
+    return exists ? activeCategory : 'all';
+  }, [activeCategory, categories]);
+
   const filteredItems = gallery.filter((item) => {
-    if (activeCategory === 'all') return true;
-    return item.category?.toLowerCase() === activeCategory.toLowerCase();
+    if (effectiveActiveCategory === 'all') return true;
+    const activeObj = categories.find((c) => c.id.toLowerCase() === effectiveActiveCategory.toLowerCase());
+    const matchedSalonCat = salonCategories.find((c) => c.slug.toLowerCase() === effectiveActiveCategory.toLowerCase());
+    const ic = (item.category || '').trim().toLowerCase();
+    if (ic === effectiveActiveCategory.toLowerCase()) return true;
+    if (activeObj && ic === activeObj.label.toLowerCase()) return true;
+    if (matchedSalonCat) {
+      if (ic === matchedSalonCat.name.toLowerCase() || ic === matchedSalonCat.id.toLowerCase()) return true;
+    }
+    return false;
   });
 
   const getCategoryLabel = (catSlug: string) => {
-    const found = categories.find((c) => c.id.toLowerCase() === (catSlug || '').toLowerCase());
-    return found ? found.label : catSlug;
+    const found = categories.find((c) => c.id.toLowerCase() === (catSlug || '').trim().toLowerCase());
+    if (found) return found.label;
+    const fromSalon = salonCategories.find((c) => c.slug.toLowerCase() === (catSlug || '').trim().toLowerCase() || c.id === catSlug);
+    return fromSalon ? fromSalon.name : catSlug;
   };
 
   return (
@@ -71,7 +111,7 @@ export const GalleryPage: React.FC = () => {
               key={cat.id}
               onClick={() => setActiveCategory(cat.id)}
               className={`px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-md transition-all cursor-pointer whitespace-nowrap ${
-                activeCategory === cat.id
+                effectiveActiveCategory === cat.id
                   ? 'bg-[#7B2D97] text-white shadow-sm'
                   : 'bg-white text-[#6B6175] border border-[#ECEBF0] hover:text-[#1C1221]'
               }`}

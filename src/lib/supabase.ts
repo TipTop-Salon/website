@@ -90,17 +90,39 @@ create table if not exists public.service_categories (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 3. App Users & Roles Table (super_admin, staff, customer)
+-- 3. App Users & Roles Table (super_admin, owner, staff, customer)
 create table if not exists public.app_users (
   id text primary key,
   email text unique not null,
   full_name text not null,
-  role text not null check (role in ('super_admin', 'staff', 'customer')),
+  role text not null check (role in ('super_admin', 'owner', 'staff', 'customer')),
   branch_id text default 'all',
   phone text,
   is_active boolean default true,
+  welcome_promo_claimed boolean default false,
+  welcome_promo_claimed_at timestamp with time zone,
+  welcome_promo_booking_id text,
+  loyalty_points integer default 0,
+  loyalty_tier text default 'bronze' check (loyalty_tier in ('bronze', 'silver', 'gold', 'atelier_vip')),
+  total_visits integer default 0,
+  total_spent numeric default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Ensure all columns and updated constraints exist if table was already created
+alter table public.app_users drop constraint if exists app_users_role_check;
+alter table public.app_users add constraint app_users_role_check check (role in ('super_admin', 'owner', 'staff', 'customer'));
+-- Drop redundant flag columns if they exist in Supabase
+alter table public.app_users drop column if exists user_type;
+alter table public.app_users drop column if exists is_mobile_user;
+alter table public.app_users drop column if exists source;
+alter table public.app_users add column if not exists welcome_promo_claimed boolean default false;
+alter table public.app_users add column if not exists welcome_promo_claimed_at timestamp with time zone;
+alter table public.app_users add column if not exists welcome_promo_booking_id text;
+alter table public.app_users add column if not exists loyalty_points integer default 0;
+alter table public.app_users add column if not exists loyalty_tier text default 'bronze';
+alter table public.app_users add column if not exists total_visits integer default 0;
+alter table public.app_users add column if not exists total_spent numeric default 0;
 
 -- 4. Services Table
 create table if not exists public.services (
@@ -148,12 +170,25 @@ create table if not exists public.bookings (
   customer_phone text not null,
   appointment_date date not null,
   appointment_time text not null,
-  stylist text not null,
+  stylist text not null default 'Assigned Atelier Specialist',
   notes text,
   total_price numeric not null,
   status text default 'pending' check (status in ('pending', 'confirmed', 'completed', 'cancelled')),
+  linked_user_id text,
+  loyalty_points_awarded integer default 0,
+  points_delivered boolean default false,
+  applied_promo text,
+  discount_amount numeric default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Ensure booking loyalty and promo columns exist if table was already created
+alter table public.bookings add column if not exists linked_user_id text;
+alter table public.bookings add column if not exists loyalty_points_awarded integer default 0;
+alter table public.bookings add column if not exists points_delivered boolean default false;
+alter table public.bookings add column if not exists applied_promo text;
+alter table public.bookings add column if not exists discount_amount numeric default 0;
+alter table public.bookings add column if not exists stylist text default 'Assigned Atelier Specialist';
 
 -- 7. Visual Portfolio Gallery Table
 create table if not exists public.gallery (
@@ -187,6 +222,39 @@ create table if not exists public.contact_messages (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- 10. Loyalty Reward Items Table (Claimable Services & Vouchers)
+create table if not exists public.loyalty_rewards (
+  id text primary key,
+  title text not null,
+  description text not null,
+  points_cost integer not null,
+  peso_equivalent_value numeric not null,
+  category text not null,
+  service_id text,
+  package_id text,
+  min_tier text default 'bronze',
+  badge_text text,
+  is_active boolean default true,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 11. Loyalty Ledger & Activity Logs Table (Audit trail of all points earned, redeemed, and adjusted)
+create table if not exists public.loyalty_logs (
+  id text primary key,
+  user_id text references public.app_users(id) on delete cascade,
+  user_email text not null,
+  user_name text not null,
+  booking_id text,
+  points_delta integer not null,
+  balance_after integer not null,
+  type text not null check (type in ('booking_completed', 'admin_adjustment', 'reward_redemption', 'bonus_signup')),
+  reason text not null,
+  performed_by text not null default 'system',
+  branch_id text,
+  branch_name text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- Enable Row Level Security (RLS)
 alter table public.branches enable row level security;
 alter table public.service_categories enable row level security;
@@ -197,6 +265,8 @@ alter table public.bookings enable row level security;
 alter table public.gallery enable row level security;
 alter table public.salon_settings enable row level security;
 alter table public.contact_messages enable row level security;
+alter table public.loyalty_rewards enable row level security;
+alter table public.loyalty_logs enable row level security;
 
 -- Drop existing policies if re-running migration
 drop policy if exists "Public branches are viewable by everyone" on public.branches;
@@ -208,6 +278,8 @@ drop policy if exists "Public gallery is viewable by everyone" on public.gallery
 drop policy if exists "Public settings are viewable by everyone" on public.salon_settings;
 drop policy if exists "Public contact messages insertable" on public.contact_messages;
 drop policy if exists "Public can insert bookings" on public.bookings;
+drop policy if exists "Public rewards viewable" on public.loyalty_rewards;
+drop policy if exists "Public users can view their loyalty logs" on public.loyalty_logs;
 drop policy if exists "Admins can manage branches" on public.branches;
 drop policy if exists "Admins can manage categories" on public.service_categories;
 drop policy if exists "Admins can manage app users" on public.app_users;
@@ -217,6 +289,8 @@ drop policy if exists "Admins can manage bookings" on public.bookings;
 drop policy if exists "Admins can manage gallery" on public.gallery;
 drop policy if exists "Admins can manage salon settings" on public.salon_settings;
 drop policy if exists "Admins can manage contact messages" on public.contact_messages;
+drop policy if exists "Admins can manage loyalty rewards" on public.loyalty_rewards;
+drop policy if exists "Admins can manage loyalty logs" on public.loyalty_logs;
 
 -- Public Read Access Policies
 create policy "Public branches are viewable by everyone" on public.branches for select using (true);
@@ -226,6 +300,8 @@ create policy "Public packages are viewable by everyone" on public.packages for 
 create policy "Public bookings viewable" on public.bookings for select using (true);
 create policy "Public gallery is viewable by everyone" on public.gallery for select using (true);
 create policy "Public settings are viewable by everyone" on public.salon_settings for select using (true);
+create policy "Public rewards viewable" on public.loyalty_rewards for select using (true);
+create policy "Public users can view their loyalty logs" on public.loyalty_logs for select using (true);
 
 -- Public Creation Policies
 create policy "Public can insert bookings" on public.bookings for insert with check (true);
@@ -241,6 +317,8 @@ create policy "Admins can manage bookings" on public.bookings for all using (tru
 create policy "Admins can manage gallery" on public.gallery for all using (true);
 create policy "Admins can manage salon settings" on public.salon_settings for all using (true);
 create policy "Admins can manage contact messages" on public.contact_messages for all using (true);
+create policy "Admins can manage loyalty rewards" on public.loyalty_rewards for all using (true);
+create policy "Admins can manage loyalty logs" on public.loyalty_logs for all using (true);
 
 -- 9. Supabase Auth Users Auto-Sync Trigger
 -- Automatically syncs users created in Supabase Authentication Dashboard into public.app_users table
@@ -254,7 +332,14 @@ begin
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    coalesce(new.raw_user_meta_data->>'role', case when new.email = 'admin@tiptopshears.com' or new.email ilike '%admin%' then 'super_admin' else 'staff' end),
+    coalesce(
+      new.raw_user_meta_data->>'role',
+      case 
+        when new.email = 'admin@tiptopshears.com' or new.email ilike '%admin%' then 'super_admin'
+        when new.email ilike '%owner%' then 'owner'
+        else 'customer' 
+      end
+    ),
     coalesce(new.raw_user_meta_data->>'branch_id', 'all'),
     true
   )
@@ -278,7 +363,14 @@ select
   id,
   email,
   coalesce(raw_user_meta_data->>'full_name', split_part(email, '@', 1)),
-  coalesce(raw_user_meta_data->>'role', case when email = 'admin@tiptopshears.com' or email ilike '%admin%' then 'super_admin' else 'staff' end),
+  coalesce(
+    raw_user_meta_data->>'role',
+    case 
+      when email = 'admin@tiptopshears.com' or email ilike '%admin%' then 'super_admin'
+      when email ilike '%owner%' then 'owner'
+      else 'customer' 
+    end
+  ),
   coalesce(raw_user_meta_data->>'branch_id', 'all'),
   true
 from auth.users
@@ -350,5 +442,43 @@ values
   ('gal-4', 'Basalt Stone Pedicure Suite', 'spa', '/images/service_pedicure_spa_1790223369654.jpg', 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'),
   ('gal-5', 'Boutique Reception & Care Bar', 'ambiance', '/images/about_salon_interior_1790223381558.jpg', 'Fluted wood detailing, warm curved archways, and organic plant botanicals.')
 on conflict (id) do nothing;
+
+-- 6. Seed App Users
+insert into public.app_users (id, email, full_name, role, branch_id, phone, is_active, loyalty_points, loyalty_tier, total_visits, total_spent)
+values
+  ('usr-admin-1', 'admin@tiptopshears.com', 'Kendy (Executive Director)', 'super_admin', 'all', '+63 917 877 5299', true, 1250, 'atelier_vip', 8, 12500),
+  ('usr-owner-1', 'owner@tiptopshears.com', 'Clarisse Henderson (Salon Owner)', 'owner', 'all', '+63 917 999 8811', true, 0, 'atelier_vip', 0, 0),
+  ('usr-staff-silang', 'staff.silang@tiptopshears.com', 'Maria Santos (Front Desk Lead)', 'staff', 'silang-premier', '+63 919 123 4567', true, 0, 'bronze', 0, 0),
+  ('usr-staff-serin', 'staff.serin@tiptopshears.com', 'Camille Reyes (Reception Concierge)', 'staff', 'tagaytay-serin', '+63 919 987 6543', true, 0, 'bronze', 0, 0),
+  ('usr-client-1', 'client.sofia@example.com', 'Sofia Villareal', 'customer', 'silang-premier', '+63 920 444 7788', true, 650, 'silver', 3, 6500),
+  ('usr-client-2', 'bianca.montes@gmail.com', 'Bianca Montes', 'customer', 'tagaytay-serin', '+63 917 555 9821', true, 1200, 'gold', 6, 12000)
+on conflict (id) do update set
+  role = excluded.role,
+  loyalty_points = excluded.loyalty_points,
+  loyalty_tier = excluded.loyalty_tier,
+  total_visits = excluded.total_visits,
+  total_spent = excluded.total_spent;
+
+-- 7. Seed Claimable Loyalty Rewards Catalog
+insert into public.loyalty_rewards (id, title, description, points_cost, peso_equivalent_value, category, service_id, min_tier, badge_text, is_active)
+values
+  ('rew-cut-50off', '50% Off Signature Haircut Privilege', 'Redeem 375 points for half-off your bespoke anatomical shears haircut and botanical blowout.', 375, 375, 'hair', 'precision-master-cut', 'bronze', 'Popular', true),
+  ('rew-gel-free', 'Complimentary Haute Gel Manicure', 'Enjoy a zero-peso Russian dry manicure with European apex structured gel overlay and glass gloss.', 650, 650, 'nails', 'glazed-couture-manicure', 'silver', 'Best Value', true),
+  ('rew-spa-foot', 'Volcanic Stone Foot Spa Upgrade', 'Complimentary basalt warm stone hydrotherapy treatment add-on to any pedicure session.', 500, 500, 'spa', null, 'silver', 'Spa Ritual', true),
+  ('rew-head-spa-free', 'Zenith Scalp Detox & Hydrotherapy', 'Japanese-style head spa with micro-camera trichoscopic analysis and warm halo cascade ring.', 1200, 1200, 'spa', 'scalp-detox-head-spa', 'gold', 'Exclusive', true),
+  ('rew-voucher-1500', '₱1,500 VIP Atelier Gift Certificate', 'Luxury salon credit gift certificate valid across any package, bridal booking, or color service.', 1500, 1500, 'voucher', null, 'atelier_vip', 'VIP Privilege', true)
+on conflict (id) do nothing;
+
+-- 8. Seed Initial Loyalty Ledger Logs
+insert into public.loyalty_logs (id, user_id, user_email, user_name, booking_id, points_delta, balance_after, type, reason, performed_by, branch_id, branch_name, created_at)
+values
+  ('log-1', 'usr-client-1', 'client.sofia@example.com', 'Sofia Villareal', 'bk-demo-1', 75, 650, 'booking_completed', 'Points awarded for completing Signature Shears & Sculpt Cut (₱750 spent, 10% earned)', 'system', 'silang-premier', 'Premier Mall Silang (Flagship)', now() - interval '2 days'),
+  ('log-2', 'usr-client-2', 'bianca.montes@gmail.com', 'Bianca Montes', null, 100, 1200, 'admin_adjustment', 'Store Owner courtesy adjustment for anniversary promotion', 'admin@tiptopshears.com', 'tagaytay-serin', 'Ayala Malls Serin Tagaytay', now() - interval '1 day')
+on conflict (id) do nothing;
 `;
+
+// Backward-compatibility alias: all loyalty tables and mobile columns are fully included in SUPABASE_CLEAN_SCHEMA_SQL
+export const SUPABASE_LOYALTY_MIGRATION_SQL = SUPABASE_CLEAN_SCHEMA_SQL;
+
+
 

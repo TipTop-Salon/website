@@ -22,7 +22,9 @@ export interface CategoryItem {
   isActive: boolean;
 }
 
-export type UserRole = 'super_admin' | 'staff' | 'customer';
+export type UserRole = 'super_admin' | 'owner' | 'staff' | 'customer';
+
+export type LoyaltyTier = 'bronze' | 'silver' | 'gold' | 'atelier_vip';
 
 export interface AppUser {
   id: string;
@@ -34,6 +36,46 @@ export interface AppUser {
   password?: string;
   createdAt: string;
   isActive: boolean;
+  // Loyalty & Rewards Integration
+  loyaltyPoints?: number;
+  loyaltyTier?: LoyaltyTier;
+  totalVisits?: number;
+  totalSpent?: number;
+  pointsDeliveredAt?: string;
+  // First-Visit Welcome 20% Off Promo
+  welcomePromoClaimed?: boolean;
+  welcomePromoClaimedAt?: string;
+  welcomePromoBookingId?: string;
+}
+
+export interface LoyaltyLog {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  bookingId?: string;
+  pointsDelta: number; // Positive for earned/adjusted up, negative for redeemed/adjusted down
+  balanceAfter: number;
+  type: 'booking_completed' | 'admin_adjustment' | 'reward_redemption' | 'bonus_signup';
+  reason: string;
+  performedBy: string; // 'system' or staff/admin email
+  branchId?: string;
+  branchName?: string;
+  createdAt: string;
+}
+
+export interface LoyaltyRewardItem {
+  id: string;
+  title: string;
+  description: string;
+  pointsCost: number; // Points required to claim
+  pesoEquivalentValue: number; // Real PHP peso value (e.g. 500 points = ₱500)
+  category: 'hair' | 'nails' | 'spa' | 'voucher' | 'package';
+  serviceId?: string;
+  packageId?: string;
+  isActive: boolean;
+  minTier?: LoyaltyTier;
+  badgeText?: string;
 }
 
 export interface ServiceItem {
@@ -82,6 +124,13 @@ export interface Booking {
   totalPrice: number;
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
   createdAt: string;
+  // Loyalty App linkage
+  linkedUserId?: string;
+  loyaltyPointsAwarded?: number;
+  pointsDelivered?: boolean;
+  // Promo discounts
+  appliedPromo?: string;
+  discountAmount?: number;
 }
 
 export interface GalleryItem {

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, Calendar, Clock, User, Phone, Mail, FileText, Sparkles, MapPin, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, CheckCircle2, Calendar, Clock, User, Phone, Mail, FileText, Sparkles, MapPin, AlertCircle, Gift, Tag } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
 import { Branch, ServiceItem, BeautyPackage } from '../../types/salon';
 
@@ -25,6 +25,9 @@ export const BookingModal: React.FC = () => {
     createBooking,
     branches = [],
     activeBranchId,
+    users = [],
+    currentUser,
+    settings,
   } = useSalon();
 
   const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
@@ -37,6 +40,7 @@ export const BookingModal: React.FC = () => {
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [applyWelcomePromo, setApplyWelcomePromo] = useState<boolean>(true);
   const [appointmentDate, setAppointmentDate] = useState(() => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -133,6 +137,34 @@ export const BookingModal: React.FC = () => {
     '07:30 PM',
   ];
 
+  // First-Visit Welcome 20% Off Promo Logic
+  const isPromoEnabled = settings?.promoEnabled !== false;
+  const promoPercent = settings?.discountPercentage || 20;
+
+  // Auto-fill from currentUser if logged in as customer
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'customer') {
+      if (!customerName) setCustomerName(currentUser.fullName);
+      if (!customerEmail) setCustomerEmail(currentUser.email);
+      if (!customerPhone && currentUser.phone) setCustomerPhone(currentUser.phone);
+    }
+  }, [currentUser]);
+
+  const matchedUser = useMemo(() => {
+    if (currentUser && currentUser.role === 'customer') return currentUser;
+    const cleanEmail = customerEmail.trim().toLowerCase();
+    const cleanPhone = customerPhone.trim().replace(/\D/g, '');
+    return users.find(u =>
+      (cleanEmail && u.email.toLowerCase() === cleanEmail) ||
+      (cleanPhone && u.phone && u.phone.replace(/\D/g, '') === cleanPhone)
+    );
+  }, [currentUser, customerEmail, customerPhone, users]);
+
+  // Eligible if promo is active AND matchedUser hasn't claimed it yet (or new guest)
+  const isEligibleForWelcomePromo = isPromoEnabled && (!matchedUser || !matchedUser.welcomePromoClaimed);
+  const discountAmount = isEligibleForWelcomePromo && applyWelcomePromo ? Math.round(selectedPrice * (promoPercent / 100)) : 0;
+  const finalPrice = Math.max(0, selectedPrice - discountAmount);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
@@ -145,6 +177,9 @@ export const BookingModal: React.FC = () => {
     setIsSubmitting(true);
     try {
       const generatedEmail = customerEmail.trim() || `${customerPhone.trim().replace(/\D/g, '') || 'guest'}@guest.tiptopshears.com`;
+
+      const estimatedPoints = Math.max(10, Math.round(finalPrice * 0.10));
+
       const newBooking = await createBooking({
         serviceId: selectedServiceId || (services?.[0]?.id ?? 'custom-booking'),
         serviceTitle: selectedTitle,
@@ -157,7 +192,11 @@ export const BookingModal: React.FC = () => {
         appointmentTime,
         stylist: 'Assigned Atelier Specialist',
         notes: notes.trim(),
-        totalPrice: selectedPrice,
+        totalPrice: finalPrice,
+        appliedPromo: discountAmount > 0 ? 'welcome_20' : undefined,
+        discountAmount: discountAmount > 0 ? discountAmount : undefined,
+        linkedUserId: matchedUser?.id,
+        loyaltyPointsAwarded: estimatedPoints,
       });
 
       setBookingSuccess(newBooking?.id || `TTP-${Date.now().toString().slice(-6)}`);
@@ -241,6 +280,13 @@ export const BookingModal: React.FC = () => {
                 <div className="flex justify-between text-sm font-semibold text-[#1C1221] pt-2.5 border-t border-[#ECEBF0]">
                   <span>Estimated Total Due</span>
                   <span className="text-[#7B2D97] font-mono tabular-nums text-base">₱{selectedPrice.toLocaleString()}</span>
+                </div>
+                <div className="pt-2 border-t border-[#ECEBF0] flex items-center justify-between text-[11px] text-[#7B2D97] font-semibold bg-[#FAF5FE] -mx-5 -mb-5 p-3 rounded-b-lg">
+                  <span className="flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />
+                    <span>Loyalty Privilege Earning:</span>
+                  </span>
+                  <span className="font-mono">+{Math.max(10, Math.round(selectedPrice * 0.1))} Points (10%)</span>
                 </div>
               </div>
 
@@ -422,6 +468,44 @@ export const BookingModal: React.FC = () => {
                 />
               </div>
 
+              {/* First-Visit Welcome 20% Off Privilege Banner */}
+              {isPromoEnabled && (
+                isEligibleForWelcomePromo ? (
+                  <div className="p-3.5 bg-gradient-to-r from-[#FAF3E0] to-[#FAF8F2] rounded-lg border border-[#E5A93C]/60 flex items-center justify-between gap-3 shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <Gift className="w-5 h-5 text-[#B87D1B] shrink-0" />
+                      <div>
+                        <div className="text-xs font-semibold text-[#1C1221] flex items-center gap-2">
+                          <span>First-Visit Welcome {promoPercent}% Off</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[#E5A93C] text-[#1C1221] text-[10px] font-bold">
+                            SAVE ₱{Math.round(selectedPrice * (promoPercent / 100)).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#6B6175] mt-0.5">
+                          {matchedUser ? `Welcome discount ready for ${matchedUser.fullName}.` : 'Introductory welcome privilege applied for your first visit.'}
+                        </p>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer bg-white px-2.5 py-1.5 rounded border border-[#E5A93C]/40 hover:bg-[#FAF3E0] transition-colors shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={applyWelcomePromo}
+                        onChange={(e) => setApplyWelcomePromo(e.target.checked)}
+                        className="w-4 h-4 rounded text-[#7B2D97] focus:ring-[#7B2D97] cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-[#7B2D97]">
+                        {applyWelcomePromo ? 'Applied' : 'Apply'}
+                      </span>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-[#FAF9FC] rounded-lg border border-[#ECEBF0] text-[11px] text-[#6B6175] flex items-center gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>First-Visit {promoPercent}% Off Welcome Privilege was previously claimed on your account.</span>
+                  </div>
+                )
+              )}
+
               {/* Price Preview Summary */}
               <div className="p-4 bg-[#F8F2FC] rounded-lg border border-[#E8DAF0] flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -436,10 +520,28 @@ export const BookingModal: React.FC = () => {
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[10px] uppercase tracking-wider text-[#8A7E93] block">Estimated Total</span>
-                  <span className="font-serif text-lg font-semibold text-[#7B2D97]">
-                    ₱{selectedPrice.toLocaleString()}
-                  </span>
+                  {discountAmount > 0 ? (
+                    <div>
+                      <span className="text-[11px] text-[#8A7E93] line-through block font-mono">
+                        ₱{selectedPrice.toLocaleString()}
+                      </span>
+                      <div className="flex items-baseline gap-1.5 justify-end">
+                        <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider">
+                          {promoPercent}% Off Applied:
+                        </span>
+                        <span className="font-serif text-lg font-bold text-[#7B2D97]">
+                          ₱{finalPrice.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-[#8A7E93] block">Estimated Total</span>
+                      <span className="font-serif text-lg font-semibold text-[#7B2D97]">
+                        ₱{selectedPrice.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
