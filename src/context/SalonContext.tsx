@@ -1722,6 +1722,9 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const newTotalVisits = (matchedUser.totalVisits || 0) + 1;
         const newTier = calculateLoyaltyTier(newBalance);
 
+        const shouldClaimWelcomePromo = !matchedUser.welcomePromoClaimed && (booking.appliedPromo === 'welcome_20' || (booking.discountAmount || 0) > 0);
+        const claimedAtTime = shouldClaimWelcomePromo ? new Date().toISOString() : matchedUser.welcomePromoClaimedAt;
+
         // Update matched user
         setUsers(prev => prev.map(u => u.id === matchedUser.id ? {
           ...u,
@@ -1729,7 +1732,12 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           totalSpent: newTotalSpent,
           totalVisits: newTotalVisits,
           loyaltyTier: newTier,
-          pointsDeliveredAt: new Date().toISOString()
+          pointsDeliveredAt: new Date().toISOString(),
+          ...(shouldClaimWelcomePromo ? {
+            welcomePromoClaimed: true,
+            welcomePromoClaimedAt: claimedAtTime,
+            welcomePromoBookingId: booking.id
+          } : {})
         } : u));
 
         // Create Loyalty Audit Ledger entry
@@ -1742,7 +1750,7 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           pointsDelta: pointsAwarded,
           balanceAfter: newBalance,
           type: 'booking_completed',
-          reason: `Earned ${pointsAwarded} pts for completing booking #${booking.id} (${booking.serviceTitle} - ₱${booking.totalPrice.toLocaleString()})`,
+          reason: `Earned ${pointsAwarded} pts for completing booking #${booking.id} (${booking.serviceTitle} - ₱${booking.totalPrice.toLocaleString()})${shouldClaimWelcomePromo ? ' [First-Visit 20% Off Claimed]' : ''}`,
           performedBy: currentUser?.email || adminEmail || 'system',
           branchId: booking.branchId,
           branchName: booking.branchName,
@@ -1754,12 +1762,19 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         // Cloud sync if connected
         const client = getSupabaseClient(supabaseUrl, supabaseKey);
         if (client && supabaseConnected) {
-          client.from('app_users').update({
+          const userUpdatePayload: any = {
             loyalty_points: newBalance,
             loyalty_tier: newTier,
             total_visits: newTotalVisits,
             total_spent: newTotalSpent
-          }).eq('id', matchedUser.id).then(({ error }) => {
+          };
+          if (shouldClaimWelcomePromo) {
+            userUpdatePayload.welcome_promo_claimed = true;
+            userUpdatePayload.welcome_promo_claimed_at = claimedAtTime;
+            userUpdatePayload.welcome_promo_booking_id = booking.id;
+          }
+
+          client.from('app_users').update(userUpdatePayload).eq('id', matchedUser.id).then(({ error }) => {
             if (error) console.warn('Supabase loyalty user update note:', error);
           });
 

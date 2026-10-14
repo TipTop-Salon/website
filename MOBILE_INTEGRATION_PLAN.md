@@ -33,6 +33,68 @@ This specification outlines the architecture, data schemas, BLoC structure, scre
 | **Tier Progression** | **Automatic Tier Scaling** | • **Bronze**: 0 – 499 pts<br>• **Silver**: 500 – 999 pts<br>• **Gold**: 1,000 – 1,999 pts<br>• **Atelier VIP**: 2,000+ pts |
 | **Points Disbursement Trigger** | **Admin / Staff Completion** | Points are **never** awarded immediately upon booking submission to prevent fraud or unfulfilled appointments. Points are credited precisely when the appointment transitions to `completed` in the atelier dashboard. |
 
+### 2.1 Official Ruling: Welcome Promo & New Member Privileges (Authoritative Specification)
+
+**Verdict**: It is **BOTH (Two-in-One Welcome Privilege Suite)**, not an either/or choice.
+
+When a customer registers an account with Tiptop Shears & Nails (either via the Mobile App self-registration or when reception creates their customer account in Web Admin), they receive **two complementary benefits**:
+
+1. **Benefit 1: 50 Welcome Bonus Points (Instant Digital Wallet Credit)**
+   - **What it is**: 50 points credited directly to their `loyalty_points` balance at the exact moment of account creation.
+   - **Value**: Equivalent to ₱50 in loyalty currency (1:1 redemption rate).
+   - **Purpose**: Provides immediate gratification; places the customer at 25% progression toward their first ₱200 Privilege Voucher (200 pts) right from day one.
+   - **Audit Entry**: Logged in `loyalty_logs` with `type: 'welcome_bonus'` / `'adjustment'`, `points_delta: 50`, `performed_by: 'system'`.
+
+2. **Benefit 2: 20% First-Visit Privilege (Checkout Service Discount)**
+   - **What it is**: A one-time introductory discount of 20% applied to the customer's **first salon appointment**.
+   - **Governing Columns**:
+     - `welcome_promo_claimed`: `boolean default false` (initialized to `false` on registration).
+     - `welcome_promo_claimed_at`: `timestamp with time zone` (stamped when the first appointment is completed or tagged at counter).
+     - `welcome_promo_booking_id`: `text` (links to the specific appointment ID where the discount was redeemed).
+   - **Application**: Auto-checked in the booking flow when `welcome_promo_claimed == false`. During checkout, total price is discounted by 20%.
+
+#### Complete Lifecycle & Flow:
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1. REGISTRATION (Mobile App or Web Admin)                              │
+│    • Customer account created                                          │
+│    • loyalty_points = 50 credited immediately                          │
+│    • welcome_promo_claimed = false (Eligible for 20% Off)              │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 2. FIRST BOOKING (Mobile App or Web Concierge)                         │
+│    • App highlights "20% Off First-Visit Privilege"                    │
+│    • Booking submitted with appliedPromo = 'welcome_20'                │
+│    • Subtotal displays 20% promotional reduction                       │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 3. SALON VISIT & SERVICE COMPLETION                                    │
+│    • Staff / Stylist marks appointment as 'completed'                  │
+│    • welcome_promo_claimed transitions to true (locked)                │
+│    • welcome_promo_claimed_at & welcome_promo_booking_id saved         │
+│    • Spend-based points awarded (10% of final paid spend) & added      │
+│      on top of the initial 50 points                                   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 4. SUBSEQUENT VISITS                                                   │
+│    • 20% First-Visit banner is dismissed / locked                      │
+│    • Customer pays standard price and continues earning 10% points     │
+│    • Store Owner / Super Admin retains manual "Reset Promo" override   │
+│      power in Back Office for VIP retention exceptions                 │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Expiry Ruling:
+- **50 Welcome Points Expiry**: **NO EXPIRY** as long as the customer account remains active. In line with premium boutique salon practices, points do not expire unexpectedly.
+- **20% First-Visit Privilege Expiry**: **NO EXPIRATION DATE UNTIL FIRST CLAIMED**. The privilege stays valid until the customer completes their first visit. 
+  *(Note: The salon owner can disable or re-enable the promo campaign globally at any time via `salon_settings.promoEnabled` from Admin Settings, which pauses new discount applications without touching anyone's point balances).*
+
 ---
 
 ## 3. Supabase Database Schema & Migration Script

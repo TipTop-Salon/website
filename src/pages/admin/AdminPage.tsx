@@ -250,7 +250,7 @@ export const AdminPage: React.FC = () => {
     email: '',
     phone: '',
     branchId: 'silang-premier',
-    initialPoints: 100,
+    initialPoints: 50,
   });
   const [isSubmittingNewCustomer, setIsSubmittingNewCustomer] = useState(false);
   const [selectedAdjustUser, setSelectedAdjustUser] = useState<AppUser | null>(null);
@@ -891,20 +891,20 @@ export const AdminPage: React.FC = () => {
         branchId: newCustomerForm.branchId,
         phone: newCustomerForm.phone.trim(),
         isActive: true,
-        loyaltyPoints: newCustomerForm.initialPoints || 100,
-        loyaltyTier: (newCustomerForm.initialPoints || 100) >= 500 ? 'silver' : 'bronze',
+        loyaltyPoints: newCustomerForm.initialPoints ?? 50,
+        loyaltyTier: (newCustomerForm.initialPoints ?? 50) >= 500 ? 'silver' : 'bronze',
         totalVisits: 0,
         totalSpent: 0,
         welcomePromoClaimed: false,
       });
-      setLoyaltyFeedbackMsg(`Customer account registered for ${created.fullName} with ${newCustomerForm.initialPoints || 100} welcome points!`);
+      setLoyaltyFeedbackMsg(`Customer account registered for ${created.fullName} with ${newCustomerForm.initialPoints ?? 50} welcome points!`);
       setIsAddCustomerModalOpen(false);
       setNewCustomerForm({
         fullName: '',
         email: '',
         phone: '',
         branchId: branches[0]?.id || 'silang-premier',
-        initialPoints: 100,
+        initialPoints: 50,
       });
       setTimeout(() => setLoyaltyFeedbackMsg(null), 5000);
     } catch (err) {
@@ -5772,7 +5772,7 @@ export const AdminPage: React.FC = () => {
                     onChange={(e) => setNewCustomerForm({ ...newCustomerForm, initialPoints: parseInt(e.target.value) || 0 })}
                     className="w-full bg-[#FAFAFB] border border-[#D9D6E2] rounded px-3 py-2 text-xs font-mono font-bold text-[#7B2D97]"
                   />
-                  <span className="text-[10px] text-[#8A7E93] mt-0.5 block">100 pts = ₱100 reward credit</span>
+                  <span className="text-[10px] text-[#8A7E93] mt-0.5 block">50 pts = ₱50 reward credit (Standard New Customer Welcome Bonus)</span>
                 </div>
               </div>
 
