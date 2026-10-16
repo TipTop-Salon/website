@@ -59,6 +59,31 @@ export async function uploadToSupabaseStorage(
     });
 
     if (uploadError) {
+      // If bucket does not exist, attempt auto-creation as public bucket and retry
+      if (
+        uploadError.message?.toLowerCase().includes('not found') ||
+        uploadError.message?.toLowerCase().includes('bucket')
+      ) {
+        try {
+          await client.storage.createBucket(bucket, { public: true });
+          const { error: retryError } = await client.storage.from(bucket).upload(filePath, file, {
+            cacheControl: '31536000, public, immutable',
+            upsert: true,
+            contentType: mimeType,
+          });
+          if (!retryError) {
+            const { data } = client.storage.from(bucket).getPublicUrl(filePath);
+            return {
+              success: true,
+              publicUrl: data.publicUrl,
+              bytes: file.size,
+              filePath,
+            };
+          }
+        } catch {
+          // If SDK doesn't have permissions to createBucket, return the informative error
+        }
+      }
       return { success: false, error: uploadError.message };
     }
 
