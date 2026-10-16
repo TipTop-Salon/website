@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Menu, X, Calendar } from 'lucide-react';
+import { Menu, X, Calendar, User } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
 
 export const Navbar: React.FC = () => {
@@ -59,7 +59,6 @@ export const Navbar: React.FC = () => {
               const isActive =
                 currentPath === link.path ||
                 (link.path !== '/' && currentPath.startsWith(link.path));
-
               return (
                 <button
                   key={link.path}
@@ -81,6 +80,16 @@ export const Navbar: React.FC = () => {
 
           {/* Zone 3: Primary Actions */}
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* Desktop Portal Login / Sign In */}
+            <button
+              onClick={() => handleNavClick('/login')}
+              className="hidden lg:flex px-3.5 py-2 text-[#DDD7E3] hover:text-[#E5A93C] hover:bg-white/5 border border-[#3E2C4A] hover:border-[#E5A93C]/40 text-xs uppercase tracking-wider font-medium rounded transition-all duration-200 items-center gap-1.5 cursor-pointer"
+              title="Portal Login for Staff, Owners & Members"
+            >
+              <User className="w-3.5 h-3.5 text-[#E5A93C]" />
+              <span>Sign In</span>
+            </button>
+
             {/* Desktop / Tablet CTA: Book Appointment */}
             <button
               onClick={() => openBookingModal()}
@@ -118,7 +127,6 @@ export const Navbar: React.FC = () => {
             const isActive =
               currentPath === link.path ||
               (link.path !== '/' && currentPath.startsWith(link.path));
-
             return (
               <button
                 key={link.path}
@@ -133,6 +141,17 @@ export const Navbar: React.FC = () => {
               </button>
             );
           })}
+
+          <button
+            onClick={() => handleNavClick('/login')}
+            className="w-full text-left px-3 py-2.5 rounded text-sm uppercase tracking-wider font-medium text-[#E5A93C] hover:bg-[#24172C] flex items-center justify-between"
+          >
+            <span className="flex items-center gap-2">
+              <User className="w-4 h-4 text-[#E5A93C]" />
+              <span>Portal Sign In</span>
+            </span>
+            <span className="text-[10px] text-[#A395AD]">Staff &amp; Members</span>
+          </button>
 
           <div className="pt-3 border-t border-[#32223D] flex flex-col gap-2">
             <button

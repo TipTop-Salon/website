@@ -107,6 +107,15 @@ export const Footer: React.FC = () => {
                   Directions & Concierge
                 </button>
               </li>
+              <li className="pt-1.5 border-t border-[#2E1E38]/80">
+                <button
+                  onClick={() => navigate('/login')}
+                  className="hover:text-white transition-colors cursor-pointer text-[#E5A93C] text-xs uppercase tracking-wider font-semibold flex items-center gap-1.5"
+                >
+                  <span>Staff &amp; Member Portal</span>
+                  <span>→</span>
+                </button>
+              </li>
             </ul>
           </div>
 

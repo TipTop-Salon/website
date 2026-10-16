@@ -151,14 +151,23 @@ const LOCAL_STORAGE_KEYS = {
 };
 
 export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Routing with robust support for /admin path and #admin hash
+  // Routing with primary support for /login path (and backwards-compatible alias /admin)
   const [currentPath, setCurrentPath] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const p = window.location.pathname;
       const h = window.location.hash;
       const s = window.location.search;
-      if (p.startsWith('/admin') || h === '#admin' || h.startsWith('#/admin') || s.includes('admin=true')) {
-        return '/admin';
+      if (
+        p.startsWith('/login') ||
+        p.startsWith('/admin') ||
+        h === '#login' ||
+        h.startsWith('#/login') ||
+        h === '#admin' ||
+        h.startsWith('#/admin') ||
+        s.includes('login=true') ||
+        s.includes('admin=true')
+      ) {
+        return '/login';
       }
       return p || '/';
     }
@@ -476,8 +485,17 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const p = window.location.pathname;
       const h = window.location.hash;
       const s = window.location.search;
-      if (p.startsWith('/admin') || h === '#admin' || h.startsWith('#/admin') || s.includes('admin=true')) {
-        setCurrentPath('/admin');
+      if (
+        p.startsWith('/login') ||
+        p.startsWith('/admin') ||
+        h === '#login' ||
+        h.startsWith('#/login') ||
+        h === '#admin' ||
+        h.startsWith('#/admin') ||
+        s.includes('login=true') ||
+        s.includes('admin=true')
+      ) {
+        setCurrentPath('/login');
       } else {
         setCurrentPath(p || '/');
       }
@@ -485,11 +503,13 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     window.addEventListener('popstate', handleUrlChange);
     window.addEventListener('hashchange', handleUrlChange);
 
-    // Keyboard shortcut for staff/superadmin to quietly enter portal: Alt + A or Ctrl + Shift + A
+    // Keyboard shortcut for staff/members/superadmin to enter portal: Alt + L, Ctrl + Shift + L (or Alt + A)
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.altKey && e.key.toLowerCase() === 'a') || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a')) {
+      const isL = e.key.toLowerCase() === 'l';
+      const isA = e.key.toLowerCase() === 'a';
+      if ((e.altKey && (isL || isA)) || (e.ctrlKey && e.shiftKey && (isL || isA))) {
         e.preventDefault();
-        navigate('/admin');
+        navigate('/login');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -502,20 +522,31 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const navigate = (path: string) => {
-    if (path.startsWith('/admin')) {
+    const isLoginOrAdmin =
+      path.startsWith('/login') ||
+      path === 'login' ||
+      path.startsWith('/admin') ||
+      path === 'admin';
+
+    if (isLoginOrAdmin) {
       try {
-        window.history.pushState({}, '', '/admin');
+        window.history.pushState({}, '', '/login');
       } catch (e) {
         // fallback
       }
       try {
-        window.location.hash = 'admin';
+        window.location.hash = 'login';
       } catch (e) {
         // ignore
       }
-      setCurrentPath('/admin');
+      setCurrentPath('/login');
     } else {
-      if (window.location.hash === '#admin' || window.location.hash.startsWith('#/admin')) {
+      if (
+        window.location.hash === '#login' ||
+        window.location.hash.startsWith('#/login') ||
+        window.location.hash === '#admin' ||
+        window.location.hash.startsWith('#/admin')
+      ) {
         try {
           window.history.replaceState(null, '', path);
         } catch (e) {
@@ -1192,12 +1223,11 @@ export const SalonProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     }
 
-    // 2. Check local users list
     const foundUser = users.find(u => u.email.toLowerCase() === cleanEmail);
     if (foundUser) {
-      // Validate password if configured, or default demo password
+      // Validate password if configured, or default demo passwords for role testing
       const validPass = foundUser.password ? foundUser.password === pass : (
-        pass === 'tiptop2026!' || pass === 'staff2026!' || pass === 'owner2026!' || pass === 'admin123'
+        pass === 'tiptop2026!' || pass === 'staff2026!' || pass === 'owner2026!' || pass === 'sofia2026!' || pass === 'client2026!' || pass === 'admin123'
       );
       if (validPass) {
         setIsAdminAuthenticated(true);

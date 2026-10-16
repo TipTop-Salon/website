@@ -33,21 +33,29 @@ export function getSupabaseClient(customUrl?: string, customKey?: string): Supab
  * Upload an image file directly to Supabase Storage bucket 'salon-media'
  * and returns the permanent CDN public URL.
  */
+/**
+ * Upload an image file directly to Supabase Storage bucket 'salon-media'
+ * with aggressive 1-year immutable caching and returns the permanent CDN public URL.
+ */
 export async function uploadToSupabaseStorage(
   client: SupabaseClient,
   file: File | Blob,
   fileName?: string,
-  bucket: string = 'salon-media'
-): Promise<{ success: boolean; publicUrl?: string; error?: string }> {
+  bucket: string = 'salon-media',
+  folder: string = 'uploads'
+): Promise<{ success: boolean; publicUrl?: string; error?: string; bytes?: number; filePath?: string }> {
   try {
-    const rawExt = file instanceof File ? file.name.split('.').pop() : 'jpg';
-    const ext = rawExt ? rawExt.toLowerCase() : 'jpg';
+    const rawExt = file instanceof File ? file.name.split('.').pop() : 'webp';
+    const ext = rawExt ? rawExt.toLowerCase() : 'webp';
+    const cleanFolder = folder.replace(/^\/+|\/+$/g, '');
     const uniqueName = fileName || `atelier-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
-    const filePath = `uploads/${uniqueName}`;
+    const filePath = `${cleanFolder}/${uniqueName}`;
+    const mimeType = file.type || (ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg');
 
     const { error: uploadError } = await client.storage.from(bucket).upload(filePath, file, {
-      cacheControl: '3600',
-      upsert: true
+      cacheControl: '31536000, public, immutable', // 1-year immutable cache for mobile & CDN speed
+      upsert: true,
+      contentType: mimeType,
     });
 
     if (uploadError) {
@@ -55,9 +63,120 @@ export async function uploadToSupabaseStorage(
     }
 
     const { data } = client.storage.from(bucket).getPublicUrl(filePath);
-    return { success: true, publicUrl: data.publicUrl };
+    return {
+      success: true,
+      publicUrl: data.publicUrl,
+      bytes: file.size,
+      filePath
+    };
   } catch (err: any) {
     return { success: false, error: err.message || 'Storage upload failed' };
+  }
+}
+
+/**
+ * Batch backfill/sync utility:
+ * Fetches default high-resolution assets, uploads them into the 'salon-media' bucket,
+ * and updates any existing services/packages in the database whose image_url is a relative path.
+ */
+export async function syncDefaultAssetsToSupabaseStorage(
+  client: SupabaseClient,
+  onProgress?: (status: string, current: number, total: number) => void
+): Promise<{ success: boolean; updatedServices: number; updatedPackages: number; error?: string }> {
+  try {
+    onProgress?.('Inspecting services and packages in Supabase...', 0, 5);
+
+    // 1. Fetch current services
+    const { data: dbServices, error: srvErr } = await client.from('services').select('id, title, category, image_url');
+    if (srvErr) throw srvErr;
+
+    // 2. Fetch current packages
+    const { data: dbPackages, error: pkgErr } = await client.from('packages').select('id, title, image_url');
+    if (pkgErr) throw pkgErr;
+
+    let updatedServices = 0;
+    let updatedPackages = 0;
+
+    const totalSteps = (dbServices?.length || 0) + (dbPackages?.length || 0);
+    let step = 0;
+
+    const getTargetCdn = (imgUrl: string, category: string) => {
+      const lower = (imgUrl || '').toLowerCase();
+      if (lower.includes('precision_shears') || category === 'hair') {
+        return 'https://images.unsplash.com/photo-1560869713-7d0a29430803?auto=format&fit=crop&w=1200&q=80';
+      }
+      if (lower.includes('luxury_manicure') || category === 'nails') {
+        return 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=1200&q=80';
+      }
+      if (lower.includes('pedicure_spa') || category === 'spa') {
+        return 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1200&q=80';
+      }
+      return 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1400&q=80';
+    };
+
+    // Update services that have relative or missing URLs
+    for (const srv of dbServices || []) {
+      step++;
+      const currentUrl = srv.image_url || '';
+      const isRelative = !currentUrl.startsWith('http://') && !currentUrl.startsWith('https://');
+      const isLegacy = currentUrl.includes('/images/service_');
+
+      if (isRelative || isLegacy) {
+        const cdnUrl = getTargetCdn(currentUrl, srv.category);
+        onProgress?.(`Updating service: ${srv.title}...`, step, totalSteps);
+
+        try {
+          const res = await fetch(cdnUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            const fileName = `srv-${srv.id.replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`;
+            const uploadRes = await uploadToSupabaseStorage(client, blob, fileName, 'salon-media', 'services');
+
+            const finalUrl = uploadRes.success && uploadRes.publicUrl ? uploadRes.publicUrl : cdnUrl;
+            await client.from('services').update({ image_url: finalUrl }).eq('id', srv.id);
+            updatedServices++;
+          }
+        } catch {
+          const cdnUrl = getTargetCdn(currentUrl, srv.category);
+          await client.from('services').update({ image_url: cdnUrl }).eq('id', srv.id);
+          updatedServices++;
+        }
+      }
+    }
+
+    // Update packages that have relative or missing URLs
+    for (const pkg of dbPackages || []) {
+      step++;
+      const currentUrl = pkg.image_url || '';
+      const isRelative = !currentUrl.startsWith('http://') && !currentUrl.startsWith('https://');
+      const isLegacy = currentUrl.includes('/images/');
+
+      if (isRelative || isLegacy) {
+        onProgress?.(`Updating package: ${pkg.title}...`, step, totalSteps);
+        const cdnUrl = 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1600&q=85';
+
+        try {
+          const res = await fetch(cdnUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            const fileName = `pkg-${pkg.id.replace(/[^a-zA-Z0-9_-]/g, '')}.jpg`;
+            const uploadRes = await uploadToSupabaseStorage(client, blob, fileName, 'salon-media', 'packages');
+
+            const finalUrl = uploadRes.success && uploadRes.publicUrl ? uploadRes.publicUrl : cdnUrl;
+            await client.from('packages').update({ image_url: finalUrl }).eq('id', pkg.id);
+            updatedPackages++;
+          }
+        } catch {
+          await client.from('packages').update({ image_url: cdnUrl }).eq('id', pkg.id);
+          updatedPackages++;
+        }
+      }
+    }
+
+    onProgress?.('Image synchronization complete!', totalSteps, totalSteps);
+    return { success: true, updatedServices, updatedPackages };
+  } catch (err: any) {
+    return { success: false, updatedServices: 0, updatedPackages: 0, error: err.message || 'Sync failed' };
   }
 }
 
@@ -421,26 +540,26 @@ on conflict (id) do nothing;
 -- 3. Seed Services
 insert into public.services (id, title, category, category_label, price, duration_minutes, description, image_url, features, is_featured, popular)
 values
-  ('srv-1', 'Japanese Precision Shears Haircut', 'hair', 'Hair & Styling', 850, 60, 'Dry architectural shears cutting tailored to anatomical head shape, bone structure, and natural cowlick flow.', '/images/service_precision_shears_1790223342879.jpg', array['Micro-tapered shears detailing', 'Purifying scalp clarifying wash', 'Bespoke blow-dry finish'], true, true),
-  ('srv-2', 'Russian Dry Cuticle & Haute Builder Gel', 'nails', 'Nails & Extensions', 1250, 75, 'Flawless diamond flame e-file cuticle clean with hypoallergenic European builder gel overlay that strengthens natural nails.', '/images/service_luxury_manicure_1790223356476.jpg', array['Diamond bit cuticle cleanup', 'Structured apex builder gel', 'Mirror glass high-shine seal'], true, true),
-  ('srv-3', 'Volcanic Basalt Stone Pedicure Ritual', 'spa', 'Spa & Wellness', 1100, 75, 'Restorative foot hydrotherapy with volcanic basalt stones, botanical essential oils, and deep muscle relief massage.', '/images/service_pedicure_spa_1790223369654.jpg', array['Dead Sea mineral foot soak', 'Warm basalt stone calf massage', 'Intense heel callus smoothing'], true, false)
+  ('srv-1', 'Japanese Precision Shears Haircut', 'hair', 'Hair & Styling', 850, 60, 'Dry architectural shears cutting tailored to anatomical head shape, bone structure, and natural cowlick flow.', 'https://images.unsplash.com/photo-1560869713-7d0a29430803?auto=format&fit=crop&w=1200&q=80', array['Micro-tapered shears detailing', 'Purifying scalp clarifying wash', 'Bespoke blow-dry finish'], true, true),
+  ('srv-2', 'Russian Dry Cuticle & Haute Builder Gel', 'nails', 'Nails & Extensions', 1250, 75, 'Flawless diamond flame e-file cuticle clean with hypoallergenic European builder gel overlay that strengthens natural nails.', 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=1200&q=80', array['Diamond bit cuticle cleanup', 'Structured apex builder gel', 'Mirror glass high-shine seal'], true, true),
+  ('srv-3', 'Volcanic Basalt Stone Pedicure Ritual', 'spa', 'Spa & Wellness', 1100, 75, 'Restorative foot hydrotherapy with volcanic basalt stones, botanical essential oils, and deep muscle relief massage.', 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1200&q=80', array['Dead Sea mineral foot soak', 'Warm basalt stone calf massage', 'Intense heel callus smoothing'], true, false)
 on conflict (id) do nothing;
 
 -- 4. Seed Packages
 insert into public.packages (id, title, subtitle, price, original_price, duration_minutes, description, included_services, image_url, is_popular, badge_text)
 values
-  ('pkg-1', 'The Signature Atelier Rejuvenation', 'Total Shears, Nails & Scalp Reset', 2650, 3200, 150, 'Our pinnacle luxury package combining anatomical shears sculpting, European builder gel manicure, and Japanese scalp wash.', array['Japanese Precision Shears Cut', 'Russian Cuticle & Gel Manicure', 'Herbal Scalp Rejuvenation Bath', 'Tailored Botanical Aftercare Regimen'], '/images/hero_salon_ambiance_1790223323507.jpg', true, 'Most Popular Atelier Ritual'),
-  ('pkg-2', 'Bridal & Red-Carpet Couturière Suite', 'High-Definition Glamour & Lasting Radiance', 3800, 4600, 180, 'Complete bridal treatment ensuring enduring photograph-ready hair luster and immaculate Haute Gel-X extensions.', array['Custom Couture Hair Sculpting', 'Haute Gel-X Full Extensions & Chrome Nail Art', 'Basalt Stone Pedicure & Reflexology', 'Pre-Event Trial Consultation'], '/images/service_luxury_manicure_1790223356476.jpg', true, 'Exclusive Bridal Experience')
+  ('pkg-1', 'The Signature Atelier Rejuvenation', 'Total Shears, Nails & Scalp Reset', 2650, 3200, 150, 'Our pinnacle luxury package combining anatomical shears sculpting, European builder gel manicure, and Japanese scalp wash.', array['Japanese Precision Shears Cut', 'Russian Cuticle & Gel Manicure', 'Herbal Scalp Rejuvenation Bath', 'Tailored Botanical Aftercare Regimen'], 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1600&q=85', true, 'Most Popular Atelier Ritual'),
+  ('pkg-2', 'Bridal & Red-Carpet Couturière Suite', 'High-Definition Glamour & Lasting Radiance', 3800, 4600, 180, 'Complete bridal treatment ensuring enduring photograph-ready hair luster and immaculate Haute Gel-X extensions.', array['Custom Couture Hair Sculpting', 'Haute Gel-X Full Extensions & Chrome Nail Art', 'Basalt Stone Pedicure & Reflexology', 'Pre-Event Trial Consultation'], 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=1200&q=80', true, 'Exclusive Bridal Experience')
 on conflict (id) do nothing;
 
 -- 5. Seed Gallery Portfolios
 insert into public.gallery (id, title, category, image_url, caption)
 values
-  ('gal-1', 'Precision Shears Sculpting', 'hair', '/images/service_precision_shears_1790223342879.jpg', 'Clean, architectural angles sculpted with Japanese steel shears for natural volume and movement.'),
-  ('gal-2', 'Glazed Almond Couture Nails', 'nails', '/images/service_luxury_manicure_1790223356476.jpg', 'Soft nude overlay with micro gold leaf inlay and ultra-glossy glass topcoat.'),
-  ('gal-3', 'The Serene Sanctuary Lounge', 'ambiance', '/images/hero_salon_ambiance_1790223323507.jpg', 'Warm ambient illumination and deep forest green velvet stations designed for calm and privacy.'),
-  ('gal-4', 'Basalt Stone Pedicure Suite', 'spa', '/images/service_pedicure_spa_1790223369654.jpg', 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'),
-  ('gal-5', 'Boutique Reception & Care Bar', 'ambiance', '/images/about_salon_interior_1790223381558.jpg', 'Fluted wood detailing, warm curved archways, and organic plant botanicals.')
+  ('gal-1', 'Precision Shears Sculpting', 'hair', 'https://images.unsplash.com/photo-1560869713-7d0a29430803?auto=format&fit=crop&w=1200&q=80', 'Clean, architectural angles sculpted with Japanese steel shears for natural volume and movement.'),
+  ('gal-2', 'Glazed Almond Couture Nails', 'nails', 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=1200&q=80', 'Soft nude overlay with micro gold leaf inlay and ultra-glossy glass topcoat.'),
+  ('gal-3', 'The Serene Sanctuary Lounge', 'ambiance', 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1600&q=85', 'Warm ambient illumination and deep forest green velvet stations designed for calm and privacy.'),
+  ('gal-4', 'Basalt Stone Pedicure Suite', 'spa', 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1200&q=80', 'Sculpted natural stone basins with botanical soaks and warm volcanic basalt stones.'),
+  ('gal-5', 'Boutique Reception & Care Bar', 'ambiance', 'https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=1200&q=80', 'Fluted wood detailing, warm curved archways, and organic plant botanicals.')
 on conflict (id) do nothing;
 
 -- 6. Seed App Users

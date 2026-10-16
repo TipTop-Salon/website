@@ -1,9 +1,9 @@
 import React from 'react';
-import { MapPin, Phone, Sparkles, Clock } from 'lucide-react';
+import { MapPin, Phone, Sparkles, Clock, Lock } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
 
 export const TopUtilityBar: React.FC = () => {
-  const { settings, openBookingModal, branches, activeBranchId, activeBranch, setActiveBranchId } = useSalon();
+  const { settings, openBookingModal, branches, activeBranchId, activeBranch, setActiveBranchId, navigate } = useSalon();
 
   return (
     <div className="bg-[#140D18] text-[#E7DFEA] border-b border-[#2E1E38] text-xs py-2 px-3 sm:px-4 transition-colors overflow-hidden">
@@ -51,20 +51,29 @@ export const TopUtilityBar: React.FC = () => {
           </button>
         </div>
 
-        {/* Right: Branch Hours & Phone */}
-        <div className="hidden lg:flex items-center gap-4 text-[#B3A6BC] text-xs">
-          <div className="flex items-center gap-1 text-[11px] text-[#A395AD]">
+        {/* Right: Branch Hours, Phone & Portal Login */}
+        <div className="flex items-center gap-3 sm:gap-4 text-[#B3A6BC] text-xs">
+          <div className="hidden lg:flex items-center gap-1 text-[11px] text-[#A395AD]">
             <Clock className="w-3 h-3 text-[#E5A93C]" />
             <span>{activeBranch?.operatingHours || '10:00 AM – 9:00 PM'}</span>
           </div>
-          <span className="text-[#3D294B]">|</span>
+          <span className="text-[#3D294B] hidden lg:inline">|</span>
           <a
             href={`tel:${(activeBranch?.phone || settings.phone).replace(/[^0-9]/g, '')}`}
-            className="flex items-center gap-1.5 hover:text-[#E5A93C] transition-colors"
+            className="hidden md:flex items-center gap-1.5 hover:text-[#E5A93C] transition-colors"
           >
             <Phone className="w-3.5 h-3.5 text-[#E5A93C]" />
             <span className="font-medium text-white">{activeBranch?.phone || settings.phone}</span>
           </a>
+          <span className="text-[#3D294B] hidden md:inline">|</span>
+          <button
+            onClick={() => navigate('/login')}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#24172C] hover:bg-[#34223F] text-[#E5A93C] hover:text-white border border-[#3D294B] text-[11px] font-medium transition-colors cursor-pointer"
+            title="Unified Portal Login (Super Admin, Salon Owner, Branch Staff, VIP Customer)"
+          >
+            <Lock className="w-3 h-3 text-[#E5A93C]" />
+            <span>Portal Login</span>
+          </button>
         </div>
       </div>
     </div>

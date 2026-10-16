@@ -1,6 +1,8 @@
+import React from 'react';
+
 /**
  * Curated high-resolution CDN images for luxury salon, nail couture, spa, and ambiance.
- * These ensure crystal-clear visual delivery across Vercel, Supabase, and local previews.
+ * These ensure crystal-clear visual delivery across Vercel, Supabase, mobile devices, and local previews.
  */
 export const CDN_IMAGES = {
   ambiance: 'https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=1400&q=80',
@@ -15,9 +17,102 @@ export const CDN_IMAGES = {
 };
 
 /**
+ * Luxury Preset Options for One-Click Image Selection in Admin
+ */
+export const SALON_IMAGE_PRESETS = [
+  {
+    id: 'hair-shears',
+    category: 'hair',
+    title: 'Japanese Precision Shears & Sculpt',
+    url: CDN_IMAGES.hairShears,
+    badge: 'Hair & Styling',
+  },
+  {
+    id: 'hair-balayage',
+    category: 'hair',
+    title: 'Haute Balayage & Gloss Finish',
+    url: CDN_IMAGES.hairBalayage,
+    badge: 'Hair & Color',
+  },
+  {
+    id: 'nails-couture',
+    category: 'nails',
+    title: 'Russian Dry Cuticle & Builder Gel',
+    url: CDN_IMAGES.nailsCouture,
+    badge: 'Nails & Gel',
+  },
+  {
+    id: 'nails-gelx',
+    category: 'nails',
+    title: 'Haute Gel-X Chrome Extensions',
+    url: CDN_IMAGES.nailsGelX,
+    badge: 'Nail Extensions',
+  },
+  {
+    id: 'spa-pedicure',
+    category: 'spa',
+    title: 'Volcanic Basalt Stone Pedicure',
+    url: CDN_IMAGES.pedicureSpa,
+    badge: 'Spa & Wellness',
+  },
+  {
+    id: 'spa-head',
+    category: 'spa',
+    title: 'Japanese Halo Scalp Detox Spa',
+    url: CDN_IMAGES.scalpHydro,
+    badge: 'Head Spa',
+  },
+  {
+    id: 'ambiance-lounge',
+    category: 'ambiance',
+    title: 'Sanctuary Lounge & Styling Stations',
+    url: CDN_IMAGES.hero,
+    badge: 'Atelier Ambiance',
+  },
+  {
+    id: 'interior-reception',
+    category: 'ambiance',
+    title: 'Boutique Care Bar & Reception',
+    url: CDN_IMAGES.interiorReception,
+    badge: 'Reception Suite',
+  },
+];
+
+/**
  * Universal fallback image when any image fails to load.
  */
 export const FALLBACK_IMAGE = CDN_IMAGES.ambiance;
+
+export type ImageSourceType = 'supabase' | 'cdn' | 'data' | 'local_relative' | 'empty';
+
+/**
+ * Detect the storage provenance of an image URL.
+ * Helps store owners spot relative paths that need S3 upload for mobile compatibility.
+ */
+export function detectImageSource(url?: string): {
+  type: ImageSourceType;
+  isMobileCompatible: boolean;
+  label: string;
+} {
+  if (!url || typeof url !== 'string' || url.trim() === '') {
+    return { type: 'empty', isMobileCompatible: false, label: 'No Image Set' };
+  }
+  const trimmed = url.trim();
+
+  if (trimmed.includes('supabase.co/storage') || trimmed.includes('/salon-media/')) {
+    return { type: 'supabase', isMobileCompatible: true, label: 'Supabase S3 Bucket' };
+  }
+
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return { type: 'data', isMobileCompatible: false, label: 'Local Memory Data URL' };
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return { type: 'cdn', isMobileCompatible: true, label: 'Cloud CDN' };
+  }
+
+  return { type: 'local_relative', isMobileCompatible: false, label: 'Local Relative Asset (Upload to S3 for Mobile)' };
+}
 
 /**
  * Normalizes image paths to ensure seamless loading across:
@@ -43,15 +138,21 @@ export function getImageUrl(url?: string): string {
     return trimmed;
   }
 
+  // If relative seeded image path like "/images/service_precision_shears_1790223342879.jpg"
+  // Map to reliable high-resolution CDN luxury assets so mobile and web never display broken images
+  if (trimmed.includes('precision_shears')) return CDN_IMAGES.hairShears;
+  if (trimmed.includes('luxury_manicure')) return CDN_IMAGES.nailsCouture;
+  if (trimmed.includes('pedicure_spa')) return CDN_IMAGES.pedicureSpa;
+  if (trimmed.includes('about_salon') || trimmed.includes('interior')) return CDN_IMAGES.interiorReception;
+  if (trimmed.includes('hero_salon') || trimmed.includes('ambiance')) return CDN_IMAGES.hero;
+
   // Normalize legacy Vite source asset paths to public static paths
   if (trimmed.startsWith('/src/assets/images/')) {
     return trimmed.replace('/src/assets/images/', '/images/');
   }
-
   if (trimmed.startsWith('src/assets/images/')) {
     return '/' + trimmed.replace('src/assets/images/', 'images/');
   }
-
   if (trimmed.startsWith('/src/assets/')) {
     return trimmed.replace('/src/assets/', '/');
   }
@@ -99,4 +200,3 @@ export function handleImageError(e: React.SyntheticEvent<HTMLImageElement, Event
     target.src = CDN_IMAGES.ambiance;
   }
 }
-

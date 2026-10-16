@@ -48,11 +48,14 @@ import {
   Globe,
   Terminal,
   Code,
+  HardDrive,
+  Zap,
 } from 'lucide-react';
 import { useSalon } from '../../context/SalonContext';
 import { ServiceItem, BeautyPackage, Branch, CategoryItem, AppUser, UserRole, GalleryItem, Booking, ContactMessage, LoyaltyRewardItem, LoyaltyLog, LoyaltyTier } from '../../types/salon';
-import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, SUPABASE_LOYALTY_MIGRATION_SQL, uploadToSupabaseStorage, getSupabaseClient } from '../../lib/supabase';
-import { getImageUrl, handleImageError, CDN_IMAGES } from '../../lib/imageHelper';
+import { SUPABASE_SQL_SCHEMA, SUPABASE_CLEAN_SCHEMA_SQL, SUPABASE_SEED_SQL, SUPABASE_LOYALTY_MIGRATION_SQL, uploadToSupabaseStorage, getSupabaseClient, syncDefaultAssetsToSupabaseStorage } from '../../lib/supabase';
+import { getImageUrl, handleImageError, CDN_IMAGES, detectImageSource } from '../../lib/imageHelper';
+import { ImageUploadField } from '../../components/common/ImageUploadField';
 
 type AdminTab = 'bookings' | 'messages' | 'loyalty' | 'services' | 'packages' | 'categories' | 'gallery' | 'branches' | 'users' | 'supabase' | 'settings';
 
@@ -280,6 +283,35 @@ export const AdminPage: React.FC = () => {
   const [tempSupabaseKey, setTempSupabaseKey] = useState(supabaseKey);
   const [supabaseMessage, setSupabaseMessage] = useState<string | null>(null);
   const [copiedSchema, setCopiedSchema] = useState(false);
+
+  // S3 Media Storage sync state
+  const [isSyncingMedia, setIsSyncingMedia] = useState(false);
+  const [mediaSyncStatus, setMediaSyncStatus] = useState<string | null>(null);
+  const [mediaSyncResult, setMediaSyncResult] = useState<{ updatedServices: number; updatedPackages: number } | null>(null);
+
+  const handleSyncMediaStorage = async () => {
+    const client = getSupabaseClient(supabaseUrl, supabaseKey);
+    if (!client) {
+      setMediaSyncStatus('Please configure and connect Supabase first.');
+      return;
+    }
+    setIsSyncingMedia(true);
+    setMediaSyncStatus('Starting storage sync...');
+    setMediaSyncResult(null);
+
+    const result = await syncDefaultAssetsToSupabaseStorage(client, (status) => {
+      setMediaSyncStatus(status);
+    });
+
+    setIsSyncingMedia(false);
+    if (result.success) {
+      setMediaSyncResult({ updatedServices: result.updatedServices, updatedPackages: result.updatedPackages });
+      setMediaSyncStatus(`Sync successful! Updated ${result.updatedServices} services and ${result.updatedPackages} packages.`);
+      syncWithSupabase();
+    } else {
+      setMediaSyncStatus(`Sync note: ${result.error || 'Failed'}`);
+    }
+  };
 
   // Local settings form state
   const [localSettings, setLocalSettings] = useState(settings);
@@ -1026,13 +1058,18 @@ export const AdminPage: React.FC = () => {
         <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-[#ECEBF0] p-8 space-y-6">
           <div className="text-center space-y-2">
             <div className="w-12 h-12 rounded-full bg-[#7B2D97]/10 text-[#7B2D97] flex items-center justify-center mx-auto">
-              <ShieldCheck className="w-6 h-6" />
+              <Lock className="w-6 h-6 text-[#7B2D97]" />
             </div>
-            <h2 className="font-serif text-3xl text-[#1C1221] font-light">
-              Tiptop Atelier Portal
-            </h2>
+            <div className="flex items-center justify-center gap-2">
+              <h2 className="font-serif text-3xl text-[#1C1221] font-light">
+                Tiptop Atelier Portal
+              </h2>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#FAF8FC] text-[#7B2D97] border border-[#ECE4F2]">
+                /login
+              </span>
+            </div>
             <p className="text-xs text-[#6B6175] max-w-sm mx-auto">
-              Role-based salon management: Super Admin for full control and Supabase sync, or Branch Staff for daily bookings.
+              Unified authentication for Super Admins, Salon Owners, Branch Concierge, and VIP Members.
             </p>
           </div>
 
@@ -1069,10 +1106,10 @@ export const AdminPage: React.FC = () => {
               />
             </div>
 
-            {/* Quick Demo Credentials */}
+            {/* Quick Demo Credentials for all user roles */}
             <div className="p-3 bg-[#FAF8FC] border border-[#ECE4F2] rounded text-xs space-y-2">
               <div className="text-[11px] font-semibold text-[#7B2D97] uppercase tracking-wider">
-                1-Click Quick Demo Sign-Ins:
+                1-Click Role Demo Sign-Ins:
               </div>
               <div className="flex flex-col gap-1.5">
                 <button
@@ -1080,7 +1117,7 @@ export const AdminPage: React.FC = () => {
                   onClick={() => handleQuickLogin('admin@tiptopshears.com', 'tiptop2026!')}
                   className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
                 >
-                  <span className="font-semibold text-[#1C1221]">👑 Super Admin (Full Control + Supabase)</span>
+                  <span className="font-semibold text-[#1C1221]">👑 Super Admin (Full Multi-Branch Control + Supabase)</span>
                   <span className="text-[10px] text-[#7B2D97] font-mono">admin@tiptopshears.com</span>
                 </button>
                 <button
@@ -1088,7 +1125,7 @@ export const AdminPage: React.FC = () => {
                   onClick={() => handleQuickLogin('owner@tiptopshears.com', 'owner2026!')}
                   className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
                 >
-                  <span className="font-semibold text-[#1C1221]">🏛️ Salon Owner (Management & Staff Oversight)</span>
+                  <span className="font-semibold text-[#1C1221]">🏛️ Salon Owner (Management &amp; Staff Operations)</span>
                   <span className="text-[10px] text-[#7B2D97] font-mono">owner@tiptopshears.com</span>
                 </button>
                 <button
@@ -1096,8 +1133,16 @@ export const AdminPage: React.FC = () => {
                   onClick={() => handleQuickLogin('staff.silang@tiptopshears.com', 'staff2026!')}
                   className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
                 >
-                  <span className="font-semibold text-[#1C1221]">✂️ Branch Staff (Premier Mall Silang)</span>
+                  <span className="font-semibold text-[#1C1221]">✂️ Branch Staff (Premier Mall Silang Front Desk)</span>
                   <span className="text-[10px] text-[#6B6175] font-mono">staff.silang@...</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('client.sofia@example.com', 'sofia2026!')}
+                  className="text-left px-2.5 py-1.5 bg-white border border-[#DDD5E5] hover:border-[#7B2D97] rounded text-xs transition-colors flex items-center justify-between cursor-pointer"
+                >
+                  <span className="font-semibold text-[#1C1221]">💎 VIP Customer (Sofia Villareal - Silver Tier)</span>
+                  <span className="text-[10px] text-[#8A7E93] font-mono">client.sofia@...</span>
                 </button>
               </div>
             </div>
@@ -2510,14 +2555,33 @@ export const AdminPage: React.FC = () => {
                     {services.map((service) => (
                       <tr key={service.id} className="hover:bg-[#FAFAFB] transition-colors">
                         <td className="p-4 font-medium text-[#1C1221] flex items-center gap-3">
-                          <img
-                            src={getImageUrl(service.imageUrl)}
-                            alt={service.title}
-                            onError={handleImageError}
-                            className="w-10 h-10 rounded object-cover border border-[#ECEBF0]"
-                          />
+                          <div
+                            className="relative group cursor-pointer shrink-0"
+                            onClick={() => openEditServiceModal(service)}
+                            title="Click to view or edit service photo in S3"
+                          >
+                            <img
+                              src={getImageUrl(service.imageUrl)}
+                              alt={service.title}
+                              onError={handleImageError}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-11 h-11 rounded-lg object-cover border border-[#ECEBF0] shadow-xs"
+                            />
+                            <div className="absolute inset-0 bg-[#7B2D97]/70 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </div>
+                          </div>
                           <div>
-                            <span className="font-semibold block">{service.title}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold block">{service.title}</span>
+                              {detectImageSource(service.imageUrl).type === 'supabase' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="Stored in Supabase S3 bucket">S3</span>
+                              )}
+                              {detectImageSource(service.imageUrl).type === 'local_relative' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200" title="Local relative path: edit service to upload to Supabase S3">Needs S3</span>
+                              )}
+                            </div>
                             <span className="text-[11px] text-[#6B6175] line-clamp-1">{service.description}</span>
                           </div>
                         </td>
@@ -2614,14 +2678,33 @@ export const AdminPage: React.FC = () => {
                     {packages.map((pkg) => (
                       <tr key={pkg.id} className="hover:bg-[#FAFAFB] transition-colors">
                         <td className="p-4 font-medium text-[#1C1221] flex items-center gap-3">
-                          <img
-                            src={getImageUrl(pkg.imageUrl)}
-                            alt={pkg.title}
-                            onError={handleImageError}
-                            className="w-10 h-10 rounded object-cover border border-[#ECEBF0]"
-                          />
+                          <div
+                            className="relative group cursor-pointer shrink-0"
+                            onClick={() => openEditPackageModal(pkg)}
+                            title="Click to view or edit package photo in S3"
+                          >
+                            <img
+                              src={getImageUrl(pkg.imageUrl)}
+                              alt={pkg.title}
+                              onError={handleImageError}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-11 h-11 rounded-lg object-cover border border-[#ECEBF0] shadow-xs"
+                            />
+                            <div className="absolute inset-0 bg-[#7B2D97]/70 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </div>
+                          </div>
                           <div>
-                            <span className="font-semibold block">{pkg.title}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold block">{pkg.title}</span>
+                              {detectImageSource(pkg.imageUrl).type === 'supabase' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="Stored in Supabase S3 bucket">S3</span>
+                              )}
+                              {detectImageSource(pkg.imageUrl).type === 'local_relative' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200" title="Local relative path: edit package to upload to Supabase S3">Needs S3</span>
+                              )}
+                            </div>
                             <span className="text-[11px] text-[#6B6175]">{pkg.subtitle}</span>
                           </div>
                         </td>
@@ -3355,6 +3438,93 @@ export const AdminPage: React.FC = () => {
                   </ul>
                 </div>
 
+                {/* S3 Media Storage & Mobile Image Sync Hub */}
+                <div className="p-5 bg-gradient-to-br from-[#FAF8FC] to-[#F5EFF9] border border-[#E8DEF0] rounded-xl space-y-4">
+                  <div className="flex items-start justify-between flex-wrap gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 rounded-lg bg-[#7B2D97] text-white">
+                          <ImageIcon className="w-4 h-4 text-[#E5A93C]" />
+                        </span>
+                        <h4 className="font-serif text-lg font-semibold text-[#1C1221]">
+                          Supabase S3 Bucket ('salon-media') &amp; Mobile Asset Hub
+                        </h4>
+                      </div>
+                      <p className="text-xs text-[#6B6175] max-w-2xl">
+                        Ensures services and packages have permanent, mobile-accessible images in the Supabase S3 storage bucket with client-side shrinking (max 1200px WebP) and 1-year immutable caching.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSyncMediaStorage}
+                        disabled={isSyncingMedia || !supabaseConnected}
+                        className="px-4 py-2.5 bg-[#7B2D97] hover:bg-[#641F7D] text-white hover:text-[#E5A93C] text-xs uppercase tracking-wider font-semibold rounded-lg shadow-sm cursor-pointer transition-colors disabled:opacity-50 flex items-center gap-2"
+                        title="Uploads bundled salon media to Supabase S3 bucket and updates services/packages in database"
+                      >
+                        {isSyncingMedia ? (
+                          <RefreshCw className="w-4 h-4 animate-spin text-[#E5A93C]" />
+                        ) : (
+                          <Upload className="w-4 h-4 text-[#E5A93C]" />
+                        )}
+                        <span>{isSyncingMedia ? 'Syncing to S3...' : '🚀 Batch Upload Seed Images to S3'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Feature Breakdown Pills */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div className="bg-white/80 p-3 rounded-lg border border-[#E9E1F0]">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#1C1221]">
+                        <HardDrive className="w-3.5 h-3.5 text-[#7B2D97]" />
+                        <span>Public S3 Bucket</span>
+                      </div>
+                      <p className="text-[11px] text-[#6B6175] mt-1 font-mono">
+                        bucket: 'salon-media' (public read)
+                      </p>
+                    </div>
+
+                    <div className="bg-white/80 p-3 rounded-lg border border-[#E9E1F0]">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#1C1221]">
+                        <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Client Compression</span>
+                      </div>
+                      <p className="text-[11px] text-[#6B6175] mt-1">
+                        Auto-shrinks photos up to 95% (max 1200px WebP) before upload
+                      </p>
+                    </div>
+
+                    <div className="bg-white/80 p-3 rounded-lg border border-[#E9E1F0]">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-[#1C1221]">
+                        <Clock className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Aggressive Caching</span>
+                      </div>
+                      <p className="text-[11px] text-[#6B6175] mt-1">
+                        1-year immutable cache header for instant mobile display
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Sync Status Feedback */}
+                  {mediaSyncStatus && (
+                    <div className="p-3 bg-white rounded-lg border border-[#E5DEEC] flex items-center justify-between text-xs text-[#1C1221]">
+                      <div className="flex items-center gap-2">
+                        {isSyncingMedia ? (
+                          <RefreshCw className="w-4 h-4 text-[#7B2D97] animate-spin shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        )}
+                        <span>{mediaSyncStatus}</span>
+                      </div>
+                      {mediaSyncResult && (
+                        <span className="font-mono text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200">
+                          +{mediaSyncResult.updatedServices} services, +{mediaSyncResult.updatedPackages} packages updated
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Migration Script Selector & Code Box */}
                 <div className="pt-6 border-t border-[#ECEBF0] space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-4">
@@ -4009,6 +4179,17 @@ export const AdminPage: React.FC = () => {
                 />
               </div>
 
+              {/* Service Cover Image (Upload to Supabase S3 with Client Compression & Presets) */}
+              <ImageUploadField
+                value={serviceForm.imageUrl}
+                onChange={(url) => setServiceForm({ ...serviceForm, imageUrl: url })}
+                label="Treatment Cover Photo"
+                helperText="Upload custom photo (auto-shrunk to 1200px WebP before S3 upload) or pick a luxury preset"
+                folder="services"
+                itemTitle={serviceForm.title || 'service'}
+                category={serviceForm.category}
+              />
+
               </div>
 
               {/* Modal Footer (Pinned at bottom) */}
@@ -4239,6 +4420,16 @@ export const AdminPage: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {/* Package Hero Image (Upload to Supabase S3 with Client Compression & Presets) */}
+              <ImageUploadField
+                value={packageForm.imageUrl}
+                onChange={(url) => setPackageForm({ ...packageForm, imageUrl: url })}
+                label="Package Hero Photo"
+                helperText="Upload custom ritual photo (auto-shrunk to 1200px WebP before S3 upload) or pick a luxury preset"
+                folder="packages"
+                itemTitle={packageForm.title || 'package'}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-[#ECEBF0] shrink-0 bg-[#FAFAFB]">

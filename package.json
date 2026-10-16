@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "check:docs": "node scripts/check-system-docs.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

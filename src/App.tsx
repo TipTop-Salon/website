@@ -17,19 +17,25 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 const AppContent: React.FC = () => {
   const { currentPath } = useSalon();
 
-  // Robust determination of admin portal mode
-  const isAdminView =
+  // Robust determination of unified portal/login view (serving Super Admins, Owners, Staff, and VIP Members)
+  const isPortalView =
+    currentPath.startsWith('/login') ||
+    currentPath === 'login' ||
     currentPath.startsWith('/admin') ||
     currentPath === 'admin' ||
     (typeof window !== 'undefined' &&
-      (window.location.pathname.startsWith('/admin') ||
+      (window.location.pathname.startsWith('/login') ||
+        window.location.pathname.startsWith('/admin') ||
+        window.location.hash === '#login' ||
+        window.location.hash.startsWith('#/login') ||
         window.location.hash === '#admin' ||
         window.location.hash.startsWith('#/admin') ||
+        window.location.search.includes('login=true') ||
         window.location.search.includes('admin=true')));
 
-  // If in admin mode: render a 100% full-screen dedicated SaaS portal.
+  // If in portal/login mode: render a 100% full-screen dedicated SaaS portal.
   // Never render the public website TopUtilityBar, Navbar, or customer Footer.
-  if (isAdminView) {
+  if (isPortalView) {
     return (
       <ErrorBoundary>
         <AdminPage />
